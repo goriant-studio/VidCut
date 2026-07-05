@@ -71,6 +71,48 @@ echo ">>> Building..."
 ninja -C "$BUILD_DIR"
 echo ">>> Build done."
 
+# --- Sign exe (Device Guard) ---
+_sign_exe() {
+    THUMBPRINT_FILE="$SCRIPT_DIR/dev-cert-thumbprint.txt"
+
+    # First run: auto-setup cert (triggers UAC)
+    if [ ! -f "$THUMBPRINT_FILE" ]; then
+        echo ""
+        echo ">>> Device Guard requires a signed exe. Setting up dev cert (UAC prompt will appear)..."
+        SETUP_PS1="$(cygpath -w "$SCRIPT_DIR/setup-devcert.ps1")"
+        powershell.exe -NoProfile -Command \
+            "Start-Process powershell -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"$SETUP_PS1\"' -Verb RunAs -Wait"
+        if [ ! -f "$THUMBPRINT_FILE" ]; then
+            echo "ERROR: Cert setup failed or was cancelled. Device Guard will block unsigned exe."
+            exit 1
+        fi
+        echo ">>> Cert setup done."
+    fi
+
+    THUMB=$(cat "$THUMBPRINT_FILE" | tr -d '[:space:]')
+    EXE_WIN="$(cygpath -w "$EXE")"
+    echo ""
+    echo ">>> Signing $EXE ..."
+
+    # Use PowerShell Set-AuthenticodeSignature — looks in CurrentUser\My for private key
+    powershell.exe -NoProfile -Command "
+        \$cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { \$_.Thumbprint -eq '$THUMB' }
+        if (-not \$cert) {
+            Write-Error 'Dev cert not found in CurrentUser\My. Delete dev-cert-thumbprint.txt and re-run build to trigger setup again.'
+            exit 1
+        }
+        \$result = Set-AuthenticodeSignature -FilePath '$EXE_WIN' -Certificate \$cert -HashAlgorithm SHA256
+        if (\$result.Status -eq 'Valid') {
+            Write-Host '>>> Signed OK.'
+        } else {
+            Write-Warning \"Signing result: \$(\$result.Status) — \$(\$result.StatusMessage)\"
+            exit 1
+        }
+    "
+}
+
+_sign_exe
+
 # --- Deploy: copy Qt + MinGW DLLs next to exe ---
 _deploy() {
     EXE_DIR="$(dirname "$EXE")"
@@ -126,7 +168,7 @@ if [ "$MODE" = "run" ]; then
 
     echo ""
     echo ">>> Launching VidCut..."
-    "$EXE"
+    cmd //c "$(cygpath -w "$EXE")"
 else
     echo ""
     echo ">>> Executable: $EXE"
