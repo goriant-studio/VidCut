@@ -1,0 +1,51 @@
+# Build output
+build/
+out/
+cmake-build-*/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# vcpkg
+vcpkg_installed/
+
+# Qt
+*.pro.user
+*.qmlc
+*.jsc
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# MSVC
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.user
+*.suo
+*.sdf
+*.opensdf
+.vs/
+*.VC.db
+*.VC.opendb
+ipch/
+
+# CLion / VS Code
+.idea/
+.vscode/
+*.kdev4
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
