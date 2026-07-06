@@ -14,7 +14,7 @@ pub mod timeline;
 pub mod track;
 
 // Re-export the most commonly used types at crate root.
-pub use clip::Clip;
+pub use clip::{Clip, ClipTransform};
 pub use media_asset::{AssetType, MediaAsset};
 pub use project::{Project, ProjectSettings};
 pub use timeline::Timeline;

@@ -1,11 +1,11 @@
 //! Inspector panel — right sidebar showing clip / asset properties.
 //!
 //! Phase 2: Shows real info for the selected clip or asset.
-//! - If a clip is selected: timing, source asset info, file path.
+//! - If a clip is selected: timing, source asset info, file path, editable transform.
 //! - If an asset is selected in the browser: media metadata.
 //! - Otherwise: empty state.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32, DragValue, RichText};
 
 use crate::{app::VidCutApp, panels::theme};
 
@@ -23,8 +23,10 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
             panel_header(ui, "INSPECTOR");
 
             // ── Determine what to display ──────────────────────────────────────
-            // Priority: selected clip > selected asset in browser.
-            let selected_clip = app.selected_clip_id.and_then(|clip_id| {
+            let selected_clip_id = app.selected_clip_id;
+            let selected_asset_id = app.selected_asset_id;
+
+            let selected_clip = selected_clip_id.and_then(|clip_id| {
                 app.project.as_ref()?.timeline.tracks.iter()
                     .flat_map(|t| t.clips.iter())
                     .find(|c| c.id == clip_id)
@@ -32,13 +34,25 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
             });
 
             if let Some(clip) = selected_clip {
-                // Find the backing asset.
                 let asset = app.project.as_ref()
                     .and_then(|p| p.media_pool.iter().find(|a| a.id == clip.asset_id))
                     .cloned();
 
-                show_clip_inspector(ui, &clip, asset.as_ref());
-            } else if let Some(asset_id) = app.selected_asset_id {
+                // Editable transform fields — collect mutations then apply
+                let mut tx = clip.transform.clone();
+                let clip_id = clip.id;
+                show_clip_inspector(ui, &clip, asset.as_ref(), &mut tx);
+
+                // Write back any changed transform values
+                if let Some(project) = &mut app.project {
+                    for track in project.timeline.tracks.iter_mut() {
+                        if let Some(c) = track.clips.iter_mut().find(|c| c.id == clip_id) {
+                            c.transform = tx;
+                            break;
+                        }
+                    }
+                }
+            } else if let Some(asset_id) = selected_asset_id {
                 let asset = app.project.as_ref()
                     .and_then(|p| p.media_pool.iter().find(|a| a.id == asset_id))
                     .cloned();
@@ -59,6 +73,7 @@ fn show_clip_inspector(
     ui: &mut egui::Ui,
     clip: &vidcut_core::Clip,
     asset: Option<&vidcut_core::MediaAsset>,
+    tx: &mut vidcut_core::ClipTransform,
 ) {
     section_header(ui, "Clip Timing");
 
@@ -86,7 +101,6 @@ fn show_clip_inspector(
         ui.add_space(8.0);
         ui.separator();
         section_header(ui, "File");
-        // Show path truncated to fit
         let path_str = asset.path.to_string_lossy();
         ui.horizontal_wrapped(|ui| {
             ui.add_space(12.0);
@@ -98,13 +112,39 @@ fn show_clip_inspector(
         });
     }
 
+    // ── Editable transform ────────────────────────────────────────────────────
     ui.add_space(16.0);
     ui.separator();
     section_header(ui, "Transform");
-    dimmed_row(ui, "Position", "0, 0");
-    dimmed_row(ui, "Scale",    "100%");
-    dimmed_row(ui, "Rotation", "0°");
-    dimmed_row(ui, "Opacity",  "100%");
+
+    drag_row(ui, "Position X", &mut tx.x, 1.0, "px");
+    drag_row(ui, "Position Y", &mut tx.y, 1.0, "px");
+
+    ui.add_space(4.0);
+
+    drag_row_range(ui, "Scale X", &mut tx.scale_x, 0.01, 0.0, 10.0, "×");
+    drag_row_range(ui, "Scale Y", &mut tx.scale_y, 0.01, 0.0, 10.0, "×");
+
+    ui.add_space(4.0);
+
+    drag_row_range(ui, "Rotation", &mut tx.rotation, 0.5, -360.0, 360.0, "°");
+
+    ui.add_space(4.0);
+
+    drag_row_range(ui, "Opacity", &mut tx.opacity, 0.01, 0.0, 1.0, "");
+    // Visual opacity bar
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        let bar_w = ui.available_width() - 12.0;
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, 4.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 2.0, Color32::from_rgb(0x2a, 0x2a, 0x40));
+        let fill_w = (tx.opacity as f32 * bar_w).max(0.0).min(bar_w);
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, 4.0)),
+            2.0,
+            Color32::from_rgb(0x6c, 0x7b, 0xff),
+        );
+    });
 }
 
 // ── Asset inspector ───────────────────────────────────────────────────────────
@@ -192,16 +232,36 @@ fn info_row(ui: &mut egui::Ui, label: &str, value: &str) {
     });
 }
 
-fn dimmed_row(ui: &mut egui::Ui, label: &str, value: &str) {
+/// An editable numeric drag field in a label+value layout.
+fn drag_row(ui: &mut egui::Ui, label: &str, value: &mut f64, speed: f64, suffix: &str) {
     ui.horizontal(|ui| {
         ui.add_space(12.0);
         ui.label(RichText::new(label).color(theme::TEXT_MUTED).size(11.0));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(12.0);
-            ui.label(
-                RichText::new(value)
-                    .color(Color32::from_rgb(0x50, 0x58, 0x80))
-                    .size(11.0),
+            ui.add(
+                DragValue::new(value)
+                    .speed(speed)
+                    .suffix(suffix)
+                    .max_decimals(1),
+            );
+        });
+    });
+}
+
+/// An editable numeric drag field with clamped range.
+fn drag_row_range(ui: &mut egui::Ui, label: &str, value: &mut f64, speed: f64, min: f64, max: f64, suffix: &str) {
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        ui.label(RichText::new(label).color(theme::TEXT_MUTED).size(11.0));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(12.0);
+            ui.add(
+                DragValue::new(value)
+                    .speed(speed)
+                    .range(min..=max)
+                    .suffix(suffix)
+                    .max_decimals(2),
             );
         });
     });

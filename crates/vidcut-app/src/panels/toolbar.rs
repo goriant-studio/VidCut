@@ -2,14 +2,14 @@
 //!
 //! Rendered as an `egui::TopBottomPanel::top`. Contains:
 //! - File actions: New, Open, Save, Export
-//! - Transport: Undo, Redo, Play/Pause, Stop
-//! - Project name display
+//! - Transport: Undo, Redo, J/K/L, Play/Pause, Stop
+//! - Playhead timecode + playback speed display
 
 use eframe::egui::{self, Color32, RichText};
 
 use crate::{app::VidCutApp, panels::theme};
 
-/// Show the toolbar panel. Called every frame from [`VidCutApp::update`].
+/// Show the toolbar panel. Called every frame from [`VidCutApp::update`].\
 pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
     egui::TopBottomPanel::top("toolbar")
         .exact_height(44.0)
@@ -63,10 +63,27 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
 
                 ui.separator();
 
-                // ── Transport ──────────────────────────────────────────────────
+                // ── J / K / L transport ────────────────────────────────────────
+                if icon_button(ui, "◀◀", "J — Reverse (press repeatedly to speed up reverse)").clicked() {
+                    app.action_j();
+                }
+                if icon_button(ui, "⏸", "K — Pause").clicked() {
+                    app.action_k();
+                }
+                if icon_button(ui, "▶▶", "L — Play / Speed up (press repeatedly to speed up)").clicked() {
+                    app.action_l();
+                }
+
+                ui.separator();
+
+                // ── Play/Pause / Stop ──────────────────────────────────────────
                 let play_label = if app.is_playing() { "⏸" } else { "▶" };
-                if icon_button(ui, play_label, if app.is_playing() { "Pause" } else { "Play" })
-                    .clicked()
+                if icon_button(
+                    ui,
+                    play_label,
+                    if app.is_playing() { "Pause (Space)" } else { "Play (Space)" },
+                )
+                .clicked()
                 {
                     app.action_play_pause();
                 }
@@ -74,18 +91,48 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
                     app.action_stop();
                 }
 
-                // ── Playhead time display ──────────────────────────────────────
+                // ── Frame step ─────────────────────────────────────────────────
+                if icon_button(ui, "⟨", "Step back one frame (←)").clicked() {
+                    app.action_step_backward();
+                }
+                if icon_button(ui, "⟩", "Step forward one frame (→)").clicked() {
+                    app.action_step_forward();
+                }
+
+                // ── Playhead time + speed ──────────────────────────────────────
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let secs = app.playhead_secs();
                     let h = (secs / 3600.0) as u32;
                     let m = ((secs % 3600.0) / 60.0) as u32;
                     let s = (secs % 60.0) as u32;
-                    let f = ((secs.fract()) * 30.0) as u32;
+                    let f = (secs.fract() * 30.0) as u32;
                     ui.label(
                         RichText::new(format!("{h:02}:{m:02}:{s:02}:{f:02}"))
                             .color(Color32::from_rgb(0xb0, 0xb8, 0xff))
                             .monospace()
                             .size(13.0),
+                    );
+
+                    // Speed indicator
+                    let speed = app.playback_speed;
+                    let speed_label = if speed == 1.0 {
+                        "1×".to_owned()
+                    } else if speed < 0.0 {
+                        format!("{speed:.1}×")
+                    } else {
+                        format!("{speed:.2}×")
+                    };
+                    let speed_color = if speed == 1.0 {
+                        Color32::from_rgb(0x60, 0x68, 0x90)
+                    } else {
+                        Color32::from_rgb(0xff, 0xc0, 0x60)
+                    };
+                    ui.add_space(12.0);
+                    ui.label(
+                        RichText::new(speed_label)
+                            .color(speed_color)
+                            .monospace()
+                            .size(12.0),
                     );
                 });
             });

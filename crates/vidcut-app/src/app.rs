@@ -4,14 +4,14 @@
 //! and UI selection state. Each panel accesses and mutates app state through
 //! the public accessor/action methods defined here.
 
-use std::{path::PathBuf, sync::mpsc};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc};
 
 use eframe::egui;
 use uuid::Uuid;
 use vidcut_core::{
     commands::{
         add_clip::AddClipCommand, delete_clip::DeleteClipCommand, move_clip::MoveClipCommand,
-        CommandHistory,
+        trim_clip::TrimClipCommand, CommandHistory,
     },
     AssetType, Clip, MediaAsset, Project, Track, TrackType,
 };
@@ -34,6 +34,8 @@ pub struct VidCutApp {
     pub playhead_secs: f64,
     /// Whether the timeline is currently playing.
     pub is_playing: bool,
+    /// Playback speed multiplier (1.0 = normal; negative = reverse).
+    pub playback_speed: f32,
 
     // ── Selection state ───────────────────────────────────────────────────────
     /// The asset currently highlighted in the Media Browser.
@@ -46,8 +48,14 @@ pub struct VidCutApp {
     pub timeline_px_per_sec: f32,
 
     // ── Drag state ────────────────────────────────────────────────────────────
-    /// While dragging a clip, stores (clip_id, track_id, original_start, drag_offset_secs).
+    /// While dragging a clip body, stores clip move state.
     pub dragging: Option<DragState>,
+    /// While dragging a clip trim handle.
+    pub trim_dragging: Option<TrimDragState>,
+
+    // ── Thumbnail cache ───────────────────────────────────────────────────────
+    /// Cached egui textures keyed by asset UUID.
+    pub thumbnail_cache: HashMap<Uuid, egui::TextureHandle>,
 
     // ── Export state ──────────────────────────────────────────────────────
     /// Whether the export dialog is currently visible.
@@ -68,7 +76,7 @@ pub struct VidCutApp {
     pub export_status: Option<String>,
 }
 
-/// Temporary state while a clip is being dragged on the timeline.
+/// Temporary state while a clip body is being moved on the timeline.
 #[derive(Debug, Clone)]
 pub struct DragState {
     pub clip_id: Uuid,
@@ -77,6 +85,31 @@ pub struct DragState {
     pub duration: f64,
     /// Current uncommitted start position (updated every frame during drag).
     pub current_start: f64,
+}
+
+/// Which edge of a clip is being trimmed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrimEdge {
+    Left,
+    Right,
+}
+
+/// Temporary state while trimming a clip edge.
+#[derive(Debug, Clone)]
+pub struct TrimDragState {
+    pub clip_id: Uuid,
+    pub track_id: Uuid,
+    pub edge: TrimEdge,
+    // original values (for undo)
+    pub orig_timeline_start: f64,
+    pub orig_timeline_end: f64,
+    pub orig_source_start: f64,
+    pub orig_source_end: f64,
+    // live values updated each frame
+    pub cur_timeline_start: f64,
+    pub cur_timeline_end: f64,
+    pub cur_source_start: f64,
+    pub cur_source_end: f64,
 }
 
 impl VidCutApp {
@@ -88,10 +121,13 @@ impl VidCutApp {
             history: CommandHistory::new(),
             playhead_secs: 0.0,
             is_playing: false,
+            playback_speed: 1.0,
             selected_asset_id: None,
             selected_clip_id: None,
             timeline_px_per_sec: 80.0,
             dragging: None,
+            trim_dragging: None,
+            thumbnail_cache: HashMap::new(),
             export_dialog_open: false,
             export_output_path: None,
             export_format: OutputFormat::Mp4,
@@ -152,6 +188,12 @@ impl VidCutApp {
             .unwrap_or((1920, 1080))
     }
 
+    /// Frame duration in seconds based on project FPS.
+    pub fn frame_duration(&self) -> f64 {
+        let fps = self.project.as_ref().map(|p| p.settings.fps).unwrap_or(30u32);
+        if fps > 0 { 1.0 / fps as f64 } else { 1.0 / 30.0 }
+    }
+
     // ── File actions ──────────────────────────────────────────────────────────
 
     pub fn action_new_project(&mut self) {
@@ -159,8 +201,10 @@ impl VidCutApp {
         self.history = CommandHistory::new();
         self.playhead_secs = 0.0;
         self.is_playing = false;
+        self.playback_speed = 1.0;
         self.selected_asset_id = None;
         self.selected_clip_id = None;
+        self.thumbnail_cache.clear();
         tracing::info!("New project created");
     }
 
@@ -178,6 +222,7 @@ impl VidCutApp {
                     self.history = CommandHistory::new();
                     self.playhead_secs = 0.0;
                     self.is_playing = false;
+                    self.thumbnail_cache.clear();
                     tracing::info!("Opened project: {:?}", path);
                 }
                 Err(e) => {
@@ -478,6 +523,7 @@ impl VidCutApp {
             timeline_end: timeline_start + duration,
             source_start: 0.0,
             source_end: duration,
+            transform: Default::default(),
         };
 
         let clip_id = clip.id;
@@ -501,6 +547,33 @@ impl VidCutApp {
             None => return,
         };
         let cmd = MoveClipCommand::new(clip_id, track_id, old_start, new_start, duration);
+        self.history.push(Box::new(cmd), &mut project.timeline);
+    }
+
+    /// Commit a trim operation (called when trim drag ends).
+    #[allow(clippy::too_many_arguments)]
+    pub fn action_commit_trim_clip(
+        &mut self,
+        clip_id: Uuid,
+        track_id: Uuid,
+        old_timeline_start: f64,
+        old_timeline_end: f64,
+        old_source_start: f64,
+        old_source_end: f64,
+        new_timeline_start: f64,
+        new_timeline_end: f64,
+        new_source_start: f64,
+        new_source_end: f64,
+    ) {
+        let project = match self.project.as_mut() {
+            Some(p) => p,
+            None => return,
+        };
+        let cmd = TrimClipCommand::new(
+            clip_id, track_id,
+            old_timeline_start, old_timeline_end, old_source_start, old_source_end,
+            new_timeline_start, new_timeline_end, new_source_start, new_source_end,
+        );
         self.history.push(Box::new(cmd), &mut project.timeline);
     }
 
@@ -535,13 +608,68 @@ impl VidCutApp {
     // ── Transport ─────────────────────────────────────────────────────────────
 
     pub fn action_play_pause(&mut self) {
-        self.is_playing = !self.is_playing;
-        tracing::debug!("Play: {}", self.is_playing);
+        if self.is_playing && self.playback_speed == 0.0 {
+            // was paused via K key — resume
+            self.playback_speed = 1.0;
+            self.is_playing = true;
+        } else {
+            self.is_playing = !self.is_playing;
+            if self.is_playing {
+                self.playback_speed = 1.0;
+            }
+        }
+        tracing::debug!("Play: {} speed: {}", self.is_playing, self.playback_speed);
     }
 
     pub fn action_stop(&mut self) {
         self.is_playing = false;
+        self.playback_speed = 1.0;
         self.playhead_secs = 0.0;
+    }
+
+    /// Step forward by one frame.
+    pub fn action_step_forward(&mut self) {
+        self.is_playing = false;
+        let frame_dur = self.frame_duration();
+        let dur = self.project_duration();
+        self.playhead_secs = (self.playhead_secs + frame_dur).min(dur.max(frame_dur));
+    }
+
+    /// Step backward by one frame.
+    pub fn action_step_backward(&mut self) {
+        self.is_playing = false;
+        let frame_dur = self.frame_duration();
+        self.playhead_secs = (self.playhead_secs - frame_dur).max(0.0);
+    }
+
+    /// J key — reverse / slow down.
+    pub fn action_j(&mut self) {
+        if !self.is_playing {
+            self.is_playing = true;
+            self.playback_speed = -1.0;
+        } else {
+            self.playback_speed = (self.playback_speed - 1.0).clamp(-4.0, -0.25);
+        }
+    }
+
+    /// K key — pause.
+    pub fn action_k(&mut self) {
+        self.is_playing = false;
+        self.playback_speed = 1.0;
+    }
+
+    /// L key — play / speed up.
+    pub fn action_l(&mut self) {
+        if !self.is_playing {
+            self.is_playing = true;
+            self.playback_speed = 1.0;
+        } else {
+            let candidates = [0.25_f32, 0.5, 1.0, 2.0, 4.0];
+            let next = candidates.iter().copied()
+                .find(|&s| s > self.playback_speed.max(0.0))
+                .unwrap_or(4.0);
+            self.playback_speed = next;
+        }
     }
 
     pub fn action_undo(&mut self) {
@@ -564,19 +692,44 @@ impl eframe::App for VidCutApp {
         // Advance playhead if playing.
         if self.is_playing {
             let dt = ctx.input(|i| i.unstable_dt) as f64;
-            self.playhead_secs += dt;
+            self.playhead_secs += dt * self.playback_speed as f64;
             let dur = self.project_duration();
-            if dur > 0.0 && self.playhead_secs > dur {
+
+            // Clamp and stop at boundaries.
+            if self.playhead_secs < 0.0 {
+                self.playhead_secs = 0.0;
                 self.is_playing = false;
+                self.playback_speed = 1.0;
+            } else if dur > 0.0 && self.playhead_secs > dur {
+                self.is_playing = false;
+                self.playback_speed = 1.0;
                 self.playhead_secs = 0.0;
             }
             ctx.request_repaint();
         }
 
+        // Poll export progress.
+        self.poll_export_progress(ctx);
+
         // Keyboard shortcuts.
         ctx.input(|i| {
             if i.key_pressed(egui::Key::Space) {
                 self.action_play_pause();
+            }
+            if i.key_pressed(egui::Key::J) {
+                self.action_j();
+            }
+            if i.key_pressed(egui::Key::K) {
+                self.action_k();
+            }
+            if i.key_pressed(egui::Key::L) {
+                self.action_l();
+            }
+            if i.key_pressed(egui::Key::ArrowRight) && !i.modifiers.any() {
+                self.action_step_forward();
+            }
+            if i.key_pressed(egui::Key::ArrowLeft) && !i.modifiers.any() {
+                self.action_step_backward();
             }
             if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
                 self.action_delete_selected_clip();

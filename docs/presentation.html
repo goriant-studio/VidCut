@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>VidCut — Professional Video Editor built in Rust</title>
+  <meta name="description" content="VidCut is an open-source, native Windows video editor built 100% in Rust using egui + wgpu." />
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+  <style>
+    /* ─── TOKENS ─────────────────────────────────────────────── */
+    :root {
+      --bg:        #0e0e14;
+      --surface:   #1a1a2a;
+      --surface2:  #22223a;
+      --accent:    #6c7bff;
+      --accent2:   #a78bfa;
+      --accent3:   #38bdf8;
+      --rust:      #e07b39;
+      --green:     #34d399;
+      --red:       #f87171;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --border:    rgba(108,123,255,0.18);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow-x: hidden;
+      cursor: default;
+    }
+
+    /* ─── ANIMATED BG ────────────────────────────────────────── */
+    #starfield {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      opacity: 0.5;
+    }
+
+    /* ─── SLIDES ─────────────────────────────────────────────── */
+    .slide {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      z-index: 1;
+      padding: 60px 40px;
+    }
+
+    /* ─── HERO ───────────────────────────────────────────────── */
+    #hero {
+      background: radial-gradient(ellipse 80% 60% at 50% 40%, rgba(108,123,255,0.12) 0%, transparent 70%);
+      text-align: center;
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(108,123,255,0.12);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 6px 18px;
+      font-size: 13px; font-weight: 500; color: var(--accent2);
+      margin-bottom: 32px;
+      animation: fadeDown 0.8s ease both;
+    }
+    .dot-live { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 1.4s ease infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(1.3)} }
+
+    .hero-title {
+      font-size: clamp(52px, 9vw, 110px);
+      font-weight: 900;
+      letter-spacing: -3px;
+      line-height: 1;
+      background: linear-gradient(135deg, #fff 30%, var(--accent) 60%, var(--accent2) 90%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: fadeUp 0.9s 0.2s ease both;
+    }
+    .hero-sub {
+      font-size: clamp(16px, 2.5vw, 22px);
+      color: var(--muted);
+      margin-top: 20px;
+      max-width: 640px;
+      line-height: 1.6;
+      animation: fadeUp 0.9s 0.4s ease both;
+    }
+    .hero-sub em { color: var(--accent); font-style: normal; font-weight: 600; }
+
+    /* RUST badge row */
+    .badge-row {
+      display: flex; flex-wrap: wrap; gap: 12px; justify-content: center;
+      margin-top: 36px;
+      animation: fadeUp 0.9s 0.6s ease both;
+    }
+    .badge {
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 13px; font-weight: 500;
+    }
+    .badge-rust  { border-color: rgba(224,123,57,0.4); color: var(--rust); }
+    .badge-egui  { border-color: rgba(52,211,153,0.3); color: var(--green); }
+    .badge-wgpu  { border-color: rgba(56,189,248,0.3); color: var(--accent3); }
+    .badge-win   { border-color: rgba(108,123,255,0.4); color: var(--accent); }
+
+    /* ─── SECTION TITLE ──────────────────────────────────────── */
+    .section-label {
+      font-size: 12px; font-weight: 700; letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 14px;
+    }
+    .section-title {
+      font-size: clamp(32px, 5vw, 60px);
+      font-weight: 800;
+      letter-spacing: -1.5px;
+      line-height: 1.1;
+    }
+    .section-desc {
+      color: var(--muted);
+      font-size: 17px;
+      margin-top: 16px;
+      max-width: 560px;
+      line-height: 1.65;
+    }
+    .text-center { text-align: center; align-items: center; }
+
+    /* ─── MOCK UI ────────────────────────────────────────────── */
+    #mockui { background: radial-gradient(ellipse 60% 50% at 50% 80%, rgba(108,123,255,0.08) 0%, transparent 70%); }
+    .app-window {
+      width: min(920px, 100%);
+      background: #141418;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: 0 40px 120px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.03);
+      overflow: hidden;
+      margin-top: 48px;
+      animation: floatCard 6s ease-in-out infinite;
+    }
+    @keyframes floatCard { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-12px)} }
+
+    .titlebar {
+      height: 36px;
+      background: #0e0e14;
+      display: flex; align-items: center; padding: 0 16px; gap: 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .tb-dot { width: 12px; height: 12px; border-radius: 50%; }
+
+    .toolbar-row {
+      height: 44px;
+      background: #1a1a1f;
+      display: flex; align-items: center; padding: 0 14px; gap: 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .tb-btn {
+      padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+      background: rgba(108,123,255,0.15); color: var(--accent);
+      border: 1px solid rgba(108,123,255,0.25);
+    }
+    .tb-btn.play { background: var(--accent); color: #fff; border-color: transparent; }
+
+    .main-area {
+      display: grid;
+      grid-template-columns: 180px 1fr 200px;
+      grid-template-rows: auto 160px;
+      height: 380px;
+    }
+    .panel {
+      border-right: 1px solid rgba(255,255,255,0.06);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      padding: 10px;
+      font-size: 11px;
+    }
+    .panel-title {
+      font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+      text-transform: uppercase; color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .media-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 6px; border-radius: 6px;
+      font-size: 11px; color: #aaa;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .media-item:hover, .media-item.active { background: rgba(108,123,255,0.15); color: var(--accent); }
+    .media-thumb { width: 36px; height: 22px; border-radius: 4px; background: #333; object-fit: cover; flex-shrink: 0; }
+
+    .preview-panel {
+      grid-column: 2 / 3;
+      background: #0a0a0f;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .preview-inner {
+      width: 240px; height: 135px;
+      background: linear-gradient(135deg, #1a1a40, #0e0e20);
+      border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: var(--muted);
+      border: 1px solid rgba(255,255,255,0.07);
+      position: relative; overflow: hidden;
+    }
+    .preview-scanline {
+      position: absolute; left: 0; right: 0;
+      height: 2px; background: rgba(108,123,255,0.4);
+      animation: scan 3s linear infinite;
+    }
+    @keyframes scan { from{top:0} to{top:100%} }
+
+    .inspector-panel {
+      grid-column: 3 / 4;
+      border-right: none;
+    }
+    .insp-field {
+      margin-bottom: 8px;
+      font-size: 10px; color: var(--muted);
+    }
+    .insp-value {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 4px;
+      padding: 3px 7px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; color: #ccc;
+      margin-top: 3px;
+    }
+
+    /* Timeline */
+    .timeline-panel {
+      grid-column: 1 / 4;
+      border-right: none;
+      background: #111118;
+      padding: 0;
+      display: flex; flex-direction: column;
+      border-bottom: none;
+    }
+    .tl-ruler {
+      height: 22px;
+      background: #0e0e14;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      display: flex; align-items: flex-end; padding: 0 10px 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; color: var(--muted);
+      gap: 40px;
+    }
+    .tl-tracks {
+      flex: 1; display: flex; flex-direction: column; padding: 8px 0;
+    }
+    .tl-track {
+      display: flex; align-items: center;
+      height: 36px; margin: 2px 0;
+    }
+    .tl-track-label {
+      width: 80px; font-size: 10px; color: var(--muted);
+      padding: 0 10px; flex-shrink: 0;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .tl-track-area {
+      flex: 1; position: relative; height: 28px;
+    }
+    .clip {
+      position: absolute; top: 0; height: 100%;
+      border-radius: 5px;
+      display: flex; align-items: center;
+      padding: 0 8px;
+      font-size: 10px; font-weight: 600;
+      cursor: pointer;
+      transition: filter 0.2s;
+    }
+    .clip:hover { filter: brightness(1.2); }
+    .clip-v { background: linear-gradient(90deg, #3a4aff, #6c7bff); color: #e0e4ff; }
+    .clip-a { background: linear-gradient(90deg, #1a6b4a, #34d399); color: #d0ffe8; }
+    .playhead {
+      position: absolute; top: -22px; bottom: 0;
+      width: 2px; background: var(--accent2);
+      left: 28%;
+      pointer-events: none;
+      z-index: 5;
+      animation: playheadMove 8s linear infinite;
+    }
+    .playhead::before {
+      content: ''; position: absolute; top: 0;
+      left: 50%; transform: translateX(-50%);
+      width: 0; height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 7px solid var(--accent2);
+    }
+    @keyframes playheadMove { 0%{left:0%} 100%{left:90%} }
+
+    /* ─── ARCHITECTURE ───────────────────────────────────────── */
+    #arch { background: radial-gradient(ellipse 70% 50% at 50% 50%, rgba(167,139,250,0.06) 0%, transparent 70%); }
+    .arch-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      width: min(900px, 100%);
+      margin-top: 48px;
+    }
+    .arch-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.3s, box-shadow 0.3s;
+    }
+    .arch-card::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(135deg, rgba(108,123,255,0.05), transparent);
+      pointer-events: none;
+    }
+    .arch-card:hover { transform: translateY(-4px); box-shadow: 0 20px 60px rgba(108,123,255,0.15); }
+    .arch-icon { font-size: 32px; margin-bottom: 14px; }
+    .arch-name {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px; font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    .arch-desc { font-size: 13px; color: var(--muted); line-height: 1.6; }
+    .arch-tag {
+      display: inline-block;
+      font-size: 10px; font-weight: 600;
+      background: rgba(108,123,255,0.12);
+      color: var(--accent);
+      border-radius: 4px; padding: 2px 8px;
+      margin-top: 10px; margin-right: 4px;
+    }
+
+    /* ─── ROADMAP ────────────────────────────────────────────── */
+    #roadmap { background: radial-gradient(ellipse 60% 40% at 50% 60%, rgba(56,189,248,0.05) 0%, transparent 70%); }
+    .roadmap-list {
+      width: min(760px, 100%);
+      margin-top: 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    .phase-item {
+      display: flex; gap: 28px;
+      padding: 28px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      position: relative;
+    }
+    .phase-item:last-child { border-bottom: none; }
+    .phase-num {
+      width: 48px; height: 48px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 18px;
+      flex-shrink: 0;
+      position: relative; z-index: 1;
+    }
+    .phase-num.done { background: rgba(52,211,153,0.15); color: var(--green); border: 2px solid var(--green); }
+    .phase-num.active { background: rgba(108,123,255,0.2); color: var(--accent); border: 2px solid var(--accent); animation: glowPulse 2s ease infinite; }
+    .phase-num.plan { background: rgba(255,255,255,0.04); color: var(--muted); border: 2px solid rgba(255,255,255,0.1); }
+    @keyframes glowPulse { 0%,100%{box-shadow:0 0 0 0 rgba(108,123,255,0.4)} 50%{box-shadow:0 0 0 8px rgba(108,123,255,0)} }
+
+    .phase-line {
+      position: absolute; left: 23px; top: 76px; bottom: -1px;
+      width: 2px; background: rgba(255,255,255,0.06);
+    }
+    .phase-line.done { background: rgba(52,211,153,0.3); }
+    .phase-line.active { background: linear-gradient(180deg, var(--accent), transparent); }
+    .phase-item:last-child .phase-line { display: none; }
+
+    .phase-content { flex: 1; }
+    .phase-header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    .phase-title { font-size: 18px; font-weight: 700; }
+    .phase-status {
+      font-size: 11px; font-weight: 600; border-radius: 100px;
+      padding: 3px 10px;
+    }
+    .status-done { background: rgba(52,211,153,0.12); color: var(--green); }
+    .status-wip  { background: rgba(108,123,255,0.15); color: var(--accent); }
+    .status-plan { background: rgba(255,255,255,0.05); color: var(--muted); }
+    .phase-desc { font-size: 14px; color: var(--muted); line-height: 1.6; }
+    .phase-features {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;
+    }
+    .feat-tag {
+      font-size: 11px; font-weight: 500;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 6px; padding: 4px 10px;
+      color: var(--text);
+    }
+
+    /* ─── TECH STACK SLIDE ───────────────────────────────────── */
+    #techstack { background: radial-gradient(ellipse 60% 50% at 30% 50%, rgba(224,123,57,0.06) 0%, transparent 70%); }
+    .tech-flow {
+      width: min(900px, 100%);
+      margin-top: 48px;
+    }
+
+    /* ─── STATS ──────────────────────────────────────────────── */
+    #stats {
+      background: radial-gradient(ellipse 80% 60% at 50% 50%, rgba(52,211,153,0.06) 0%, transparent 70%);
+      text-align: center;
+    }
+    .stats-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 24px;
+      width: min(900px, 100%);
+      margin-top: 52px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 36px 20px;
+      transition: transform 0.3s, box-shadow 0.3s;
+    }
+    .stat-card:hover { transform: translateY(-6px); box-shadow: 0 24px 60px rgba(108,123,255,0.2); }
+    .stat-num {
+      font-size: 48px; font-weight: 900;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1;
+    }
+    .stat-label { font-size: 13px; color: var(--muted); margin-top: 8px; }
+
+    /* ─── CLOSING SLIDE ──────────────────────────────────────── */
+    #outro {
+      background: radial-gradient(ellipse 80% 60% at 50% 40%, rgba(108,123,255,0.12) 0%, transparent 70%);
+      text-align: center;
+    }
+    .outro-logo {
+      font-size: 80px; font-weight: 900; letter-spacing: -4px;
+      background: linear-gradient(135deg, #fff 30%, var(--accent) 60%, var(--accent2) 90%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: fadeUp 0.9s ease both;
+    }
+    .outro-tagline {
+      font-size: 22px; color: var(--muted); margin-top: 16px;
+      animation: fadeUp 0.9s 0.2s ease both;
+    }
+    .outro-links {
+      display: flex; gap: 16px; justify-content: center; margin-top: 32px;
+      animation: fadeUp 0.9s 0.4s ease both;
+    }
+    .link-btn {
+      padding: 12px 28px;
+      border-radius: 10px;
+      font-weight: 600; font-size: 15px;
+      text-decoration: none;
+      transition: all 0.25s;
+    }
+    .link-btn.primary {
+      background: var(--accent); color: #fff;
+    }
+    .link-btn.primary:hover { background: var(--accent2); transform: translateY(-2px); }
+    .link-btn.secondary {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: var(--text);
+    }
+    .link-btn.secondary:hover { background: rgba(255,255,255,0.1); transform: translateY(-2px); }
+
+    /* ─── NAV DOTS ───────────────────────────────────────────── */
+    .nav-dots {
+      position: fixed; right: 28px; top: 50%; transform: translateY(-50%);
+      display: flex; flex-direction: column; gap: 10px; z-index: 100;
+    }
+    .nav-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: rgba(255,255,255,0.2);
+      cursor: pointer; transition: all 0.3s;
+    }
+    .nav-dot.active { background: var(--accent); transform: scale(1.4); }
+    .nav-dot:hover { background: var(--accent2); }
+
+    /* ─── KEYFRAMES ──────────────────────────────────────────── */
+    @keyframes fadeUp   { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:none} }
+    @keyframes fadeDown { from{opacity:0;transform:translateY(-20px)} to{opacity:1;transform:none} }
+
+    /* ─── SCROLLBAR ──────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: rgba(108,123,255,0.3); border-radius: 3px; }
+
+    /* ─── RESPONSIVE ─────────────────────────────────────────── */
+    @media (max-width: 700px) {
+      .arch-grid { grid-template-columns: 1fr; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .main-area { grid-template-columns: 1fr; grid-template-rows: auto; height: auto; }
+      .preview-panel { height: 160px; grid-column: 1; }
+      .inspector-panel, .panel:nth-child(1) { display: none; }
+      .timeline-panel { grid-column: 1; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── STARFIELD SVG BG ────────────────────────────────────── -->
+<svg id="starfield" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="sg1" cx="50%" cy="50%">
+      <stop offset="0%" stop-color="#6c7bff" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="transparent"/>
+    </radialGradient>
+  </defs>
+  <g id="stars"></g>
+  <!-- Floating gradient orbs -->
+  <circle cx="15%" cy="20%" r="280" fill="url(#sg1)" opacity="0.15">
+    <animate attributeName="cx" values="15%;20%;15%" dur="18s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="20%;25%;20%" dur="14s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="80%" cy="70%" r="320" fill="#a78bfa" opacity="0.06">
+    <animate attributeName="cx" values="80%;75%;80%" dur="22s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="70%;65%;70%" dur="16s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="50%" cy="90%" r="200" fill="#38bdf8" opacity="0.06">
+    <animate attributeName="cy" values="90%;85%;90%" dur="12s" repeatCount="indefinite"/>
+  </circle>
+</svg>
+
+<!-- ── NAV DOTS ────────────────────────────────────────────── -->
+<nav class="nav-dots" id="navDots">
+  <div class="nav-dot active" data-target="hero" title="Intro"></div>
+  <div class="nav-dot" data-target="mockui" title="App UI"></div>
+  <div class="nav-dot" data-target="arch" title="Architecture"></div>
+  <div class="nav-dot" data-target="techstack" title="Tech Stack"></div>
+  <div class="nav-dot" data-target="roadmap" title="Roadmap"></div>
+  <div class="nav-dot" data-target="stats" title="Stats"></div>
+  <div class="nav-dot" data-target="outro" title="Outro"></div>
+</nav>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SLIDE 1 — HERO -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="slide" id="hero">
+  <div class="hero-badge">
+    <span class="dot-live"></span>
+    Open Source · Built 100% in Rust · Windows Native
+  </div>
+
+  <h1 class="hero-title">VidCut</h1>
+  <p class="hero-sub">
+    Professional video editor for Windows — <em>no C++, no Qt, no Electron</em>.
+    Maximum performance. Memory safety. Native feel.
+  </p>
+
+  <div class="badge-row">
+    <span class="badge badge-rust">
+      <svg width="16" height="16" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="20" stroke="#e07b39" stroke-width="3"/><path d="M16 30 L24 18 L32 30" stroke="#e07b39" stroke-width="2.5" fill="none"/></svg>
+      Rust stable
+    </span>
+    <span class="badge badge-egui">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="3" stroke="#34d399" stroke-width="2"/><path d="M7 12h10M12 7v10" stroke="#34d399" stroke-width="2"/></svg>
+      egui + wgpu
+    </span>
+    <span class="badge badge-wgpu">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><polygon points="12,2 22,8 22,16 12,22 2,16 2,8" stroke="#38bdf8" stroke-width="2" fill="none"/></svg>
+      GPU Accelerated
+    </span>
+    <span class="badge badge-win">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="9" height="9" rx="1" fill="#6c7bff"/><rect x="13" y="2" width="9" height="9" rx="1" fill="#6c7bff"/><rect x="2" y="13" width="9" height="9" rx="1" fill="#6c7bff"/><rect x="13" y="13" width="9" height="9" rx="1" fill="#6c7bff"/></svg>
+      Windows 10/11
+    </span>
+  </div>
+
+  <!-- Hero SVG decorative element -->
+  <svg width="600" height="80" viewBox="0 0 600 80" style="margin-top:48px; opacity:0.4; animation:fadeUp 1s 0.8s ease both;">
+    <defs>
+      <linearGradient id="waveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="transparent"/>
+        <stop offset="20%" stop-color="#6c7bff"/>
+        <stop offset="50%" stop-color="#a78bfa"/>
+        <stop offset="80%" stop-color="#6c7bff"/>
+        <stop offset="100%" stop-color="transparent"/>
+      </linearGradient>
+    </defs>
+    <!-- Waveform bars -->
+    <g fill="url(#waveGrad)">
+      <rect x="10"  y="50" width="4" height="10" rx="2"><animate attributeName="height" values="10;30;10" dur="1.2s" repeatCount="indefinite"/><animate attributeName="y" values="50;30;50" dur="1.2s" repeatCount="indefinite"/></rect>
+      <rect x="20"  y="40" width="4" height="20" rx="2"><animate attributeName="height" values="20;50;20" dur="0.9s" repeatCount="indefinite"/><animate attributeName="y" values="40;15;40" dur="0.9s" repeatCount="indefinite"/></rect>
+      <rect x="30"  y="30" width="4" height="40" rx="2"><animate attributeName="height" values="40;60;40" dur="1.4s" repeatCount="indefinite"/><animate attributeName="y" values="30;10;30" dur="1.4s" repeatCount="indefinite"/></rect>
+      <rect x="40"  y="45" width="4" height="15" rx="2"><animate attributeName="height" values="15;35;15" dur="1.1s" repeatCount="indefinite"/><animate attributeName="y" values="45;25;45" dur="1.1s" repeatCount="indefinite"/></rect>
+      <rect x="50"  y="35" width="4" height="30" rx="2"><animate attributeName="height" values="30;55;30" dur="0.8s" repeatCount="indefinite"/><animate attributeName="y" values="35;10;35" dur="0.8s" repeatCount="indefinite"/></rect>
+      <rect x="60"  y="40" width="4" height="20" rx="2"><animate attributeName="height" values="20;45;20" dur="1.3s" repeatCount="indefinite"/><animate attributeName="y" values="40;15;40" dur="1.3s" repeatCount="indefinite"/></rect>
+      <rect x="70"  y="55" width="4" height="8"  rx="2"><animate attributeName="height" values="8;25;8"  dur="1.0s" repeatCount="indefinite"/><animate attributeName="y" values="55;38;55" dur="1.0s" repeatCount="indefinite"/></rect>
+      <rect x="80"  y="30" width="4" height="40" rx="2"><animate attributeName="height" values="40;65;40" dur="1.5s" repeatCount="indefinite"/><animate attributeName="y" values="30;5;30"  dur="1.5s" repeatCount="indefinite"/></rect>
+      <rect x="90"  y="42" width="4" height="18" rx="2"><animate attributeName="height" values="18;40;18" dur="0.7s" repeatCount="indefinite"/><animate attributeName="y" values="42;20;42" dur="0.7s" repeatCount="indefinite"/></rect>
+      <rect x="100" y="36" width="4" height="28" rx="2"><animate attributeName="height" values="28;50;28" dur="1.2s" repeatCount="indefinite"/><animate attributeName="y" values="36;14;36" dur="1.2s" repeatCount="indefinite"/></rect>
+      <rect x="110" y="48" width="4" height="12" rx="2"><animate attributeName="height" values="12;30;12" dur="0.9s" repeatCount="indefinite"/><animate attributeName="y" values="48;30;48" dur="0.9s" repeatCount="indefinite"/></rect>
+      <rect x="120" y="33" width="4" height="34" rx="2"><animate attributeName="height" values="34;58;34" dur="1.6s" repeatCount="indefinite"/><animate attributeName="y" values="33;8;33"  dur="1.6s" repeatCount="indefinite"/></rect>
+      <rect x="130" y="44" width="4" height="16" rx="2"><animate attributeName="height" values="16;38;16" dur="1.1s" repeatCount="indefinite"/><animate attributeName="y" values="44;22;44" dur="1.1s" repeatCount="indefinite"/></rect>
+      <rect x="140" y="28" width="4" height="44" rx="2"><animate attributeName="height" values="44;68;44" dur="0.8s" repeatCount="indefinite"/><animate attributeName="y" values="28;2;28"  dur="0.8s" repeatCount="indefinite"/></rect>
+      <rect x="150" y="38" width="4" height="24" rx="2"><animate attributeName="height" values="24;48;24" dur="1.3s" repeatCount="indefinite"/><animate attributeName="y" values="38;16;38" dur="1.3s" repeatCount="indefinite"/></rect>
+      <rect x="160" y="50" width="4" height="10" rx="2"><animate attributeName="height" values="10;28;10" dur="1.0s" repeatCount="indefinite"/><animate attributeName="y" values="50;32;50" dur="1.0s" repeatCount="indefinite"/></rect>
+      <rect x="170" y="35" width="4" height="30" rx="2"><animate attributeName="height" values="30;52;30" dur="1.4s" repeatCount="indefinite"/><animate attributeName="y" values="35;13;35" dur="1.4s" repeatCount="indefinite"/></rect>
+      <rect x="180" y="42" width="4" height="18" rx="2"><animate attributeName="height" values="18;42;18" dur="0.6s" repeatCount="indefinite"/><animate attributeName="y" values="42;18;42" dur="0.6s" repeatCount="indefinite"/></rect>
+      <rect x="190" y="30" width="4" height="40" rx="2"><animate attributeName="height" values="40;62;40" dur="1.2s" repeatCount="indefinite"/><animate attributeName="y" values="30;8;30"  dur="1.2s" repeatCount="indefinite"/></rect>
+      <rect x="200" y="46" width="4" height="14" rx="2"><animate attributeName="height" values="14;36;14" dur="0.9s" repeatCount="indefinite"/><animate attributeName="y" values="46;24;46" dur="0.9s" repeatCount="indefinite"/></rect>
+      <!-- middle -->
+      <rect x="290" y="20" width="6" height="50" rx="3"><animate attributeName="height" values="50;72;50" dur="0.5s" repeatCount="indefinite"/><animate attributeName="y" values="20;-2;20"  dur="0.5s" repeatCount="indefinite"/></rect>
+      <rect x="300" y="15" width="6" height="55" rx="3"><animate attributeName="height" values="55;75;55" dur="0.6s" repeatCount="indefinite"/><animate attributeName="y" values="15;0;15"   dur="0.6s" repeatCount="indefinite"/></rect>
+      <rect x="310" y="20" width="6" height="50" rx="3"><animate attributeName="height" values="50;72;50" dur="0.5s" repeatCount="indefinite"/><animate attributeName="y" values="20;-2;20"  dur="0.5s" repeatCount="indefinite"/></rect>
+      <!-- right mirror -->
+      <rect x="400" y="30" width="4" height="40" rx="2"><animate attributeName="height" values="40;62;40" dur="1.2s" repeatCount="indefinite"/><animate attributeName="y" values="30;8;30"  dur="1.2s" repeatCount="indefinite"/></rect>
+      <rect x="410" y="46" width="4" height="14" rx="2"><animate attributeName="height" values="14;36;14" dur="0.9s" repeatCount="indefinite"/><animate attributeName="y" values="46;24;46" dur="0.9s" repeatCount="indefinite"/></rect>
+      <rect x="420" y="35" width="4" height="30" rx="2"><animate attributeName="height" values="30;52;30" dur="1.4s" repeatCount="indefinite"/><animate attributeName="y" values="35;13;35" dur="1.4s" repeatCount="indefinite"/></rect>
+      <rect x="430" y="50" width="4" height="10" rx="2"><animate attributeName="height" values="10;28;10" dur="1.0s" repeatCount="indefinite"/><animate attributeName="y" values="50;32;50" dur="1.0s" repeatCount="indefinite"/></rect>
+      <rect x="440" y="38" width="4" height="24" rx="2"><animate attributeName="height" values="24;48;24" dur="1.3s" repeatCount="indefinite"/><animate attributeName="y" values="38;16;38" dur="1.3s" repeatCount="indefinite"/></rect>
+      <rect x="450" y="28" width="4" height="44" rx="2"><animate attributeName="height" values="44;68;44" dur="0.8s" repeatCount="indefinite"/><animate attributeName="y" values="28;2;28"  dur="0.8s" repeatCount="indefinite"/></rect>
+      <rect x="460" y="44" width="4" height="16" rx="2"><animate attributeName="height" values="16;38;16" dur="1.1s" repeatCount="indefinite"/><animate attributeName="y" values="44;22;44" dur="1.1s" repeatCount="indefinite"/></rect>
+      <rect x="470" y="33" width="4" height="34" rx="2"><animate attributeName="height" values="34;58;34" dur="1.6s" repeatCount="indefinite"/><animate attributeName="y" values="33;8;33"  dur="1.6s" repeatCount="indefinite"/></rect>
+      <rect x="480" y="48" width="4" height="12" rx="2"><animate attributeName="height" values="12;30;12" dur="0.9s" repeatCount="indefinite"/><animate attributeName="y" values="48;30;48" dur="0.9s" repeatCount="indefinite"/></rect>
+      <rect x="490" y="36" width="4" height="28" rx="2"><animate attributeName="height" values="28;50;28" dur="1.2s" repeatCount="indefinite"/><animate attributeName="y" values="36;14;36" dur="1.2s" repeatCount="indefinite"/></rect>
+      <rect x="500" y="42" width="4" height="18" rx="2"><animate attributeName="height" values="18;40;18" dur="0.7s" repeatCount="indefinite"/><animate attributeName="y" values="42;20;42" dur="0.7s" repeatCount="indefinite"/></rect>
+      <rect x="510" y="30" width="4" height="40" rx="2"><animate attributeName="height" values="40;65;40" dur="1.5s" repeatCount="indefinite"/><animate attributeName="y" values="30;5;30"  dur="1.5s" repeatCount="indefinite"/></rect>
+      <rect x="520" y="55" width="4" height="8"  rx="2"><animate attributeName="height" values="8;25;8"  dur="1.0s" repeatCount="indefinite"/><animate attributeName="y" values="55;38;55" dur="1.0s" repeatCount="indefinite"/></rect>
+      <rect x="530" y="40" width="4" height="20" rx="2"><animate attributeName="height" values="20;45;20" dur="1.3s" repeatCount="indefinite"/><animate attributeName="y" values="40;15;40" dur="1.3s" repeatCount="indefinite"/></rect>
+      <rect x="540" y="35" width="4" height="30" rx="2"><animate attributeName="height" values="30;55;30" dur="0.8s" repeatCount="indefinite"/><animate attributeName="y" values="35;10;35" dur="0.8s" repeatCount="indefinite"/></rect>
+      <rect x="550" y="45" width="4" height="15" rx="2"><animate attributeName="height" values="15;35;15" dur="1.1s" repeatCount="indefinite"/><animate attributeName="y" values="45;25;45" dur="1.1s" repeatCount="indefinite"/></rect>
+      <rect x="560" y="30" width="4" height="40" rx="2"><animate attributeName="height" values="40;60;40" dur="1.4s" repeatCount="indefinite"/><animate attributeName="y" values="30;10;30" dur="1.4s" repeatCount="indefinite"/></rect>
+      <rect x="570" y="40" width="4" height="20" rx="2"><animate attributeName="height" values="20;50;20" dur="0.9s" repeatCount="indefinite"/><animate attributeName="y" values="40;15;40" dur="0.9s" repeatCount="indefinite"/></rect>
+      <rect x="580" y="50" width="4" height="10" rx="2"><animate attributeName="height" values="10;30;10" dur="1.2s" repeatCount="indefinite"/><animate attributeName="y" values="50;30;50" dur="1.2s" repeatCount="indefinite"/></rect>
+    </g>
+  </svg>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SLIDE 2 — MOCK APP UI -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="slide" id="mockui">
+  <p class="section-label">Interface</p>
+  <h2 class="section-title">Final Cut Pro-inspired UI</h2>
+  <p class="section-desc">5-panel layout — Toolbar, Media Browser, Inspector, Preview, Timeline — all rendered with immediate-mode egui.</p>
+
+  <div class="app-window">
+    <!-- Title bar -->
+    <div class="titlebar">
+      <div class="tb-dot" style="background:#ff5f57"></div>
+      <div class="tb-dot" style="background:#febc2e"></div>
+      <div class="tb-dot" style="background:#28c840"></div>
+      <span style="font-size:12px;color:#555;margin-left:12px;font-family:'JetBrains Mono',monospace;">VidCut — project.vidcut</span>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar-row">
+      <span class="tb-btn">New</span>
+      <span class="tb-btn">Open</span>
+      <span class="tb-btn">Save</span>
+      <span style="flex:1"></span>
+      <span class="tb-btn play">▶ Play</span>
+      <span style="flex:1"></span>
+      <span class="tb-btn">Undo</span>
+      <span class="tb-btn">Redo</span>
+      <span class="tb-btn">Export</span>
+    </div>
+
+    <!-- Main area -->
+    <div class="main-area">
+      <!-- Media Browser -->
+      <div class="panel">
+        <div class="panel-title">Media Browser</div>
+        <div class="media-item active">
+          <div class="media-thumb" style="background:linear-gradient(135deg,#2a2a60,#6c7bff)"></div>
+          <div><div>intro.mp4</div><div style="color:#555;font-size:9px">00:00:30 · 1080p</div></div>
+        </div>
+        <div class="media-item">
+          <div class="media-thumb" style="background:linear-gradient(135deg,#1a3a2a,#34d399)"></div>
+          <div><div>demo.mp4</div><div style="color:#555;font-size:9px">00:01:12 · 4K</div></div>
+        </div>
+        <div class="media-item">
+          <div class="media-thumb" style="background:linear-gradient(135deg,#3a1a1a,#f87171)"></div>
+          <div><div>music.mp3</div><div style="color:#555;font-size:9px">00:03:45 · 320kbps</div></div>
+        </div>
+        <div class="media-item">
+          <div class="media-thumb" style="background:linear-gradient(135deg,#1a2a3a,#38bdf8)"></div>
+          <div><div>outro.mp4</div><div style="color:#555;font-size:9px">00:00:15 · 1080p</div></div>
+        </div>
+      </div>
+
+      <!-- Preview -->
+      <div class="preview-panel">
+        <div class="preview-inner">
+          <div class="preview-scanline"></div>
+          <!-- Mini video frame SVG -->
+          <svg width="200" height="112" viewBox="0 0 200 112" style="position:absolute">
+            <rect width="200" height="112" fill="#0a0a18"/>
+            <circle cx="100" cy="56" r="20" fill="rgba(108,123,255,0.2)" stroke="rgba(108,123,255,0.5)" stroke-width="1.5"/>
+            <polygon points="93,48 93,64 115,56" fill="rgba(108,123,255,0.9)"/>
+            <text x="100" y="100" text-anchor="middle" fill="rgba(255,255,255,0.25)" font-size="9" font-family="Inter">00:00:12:04</text>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Inspector -->
+      <div class="panel inspector-panel">
+        <div class="panel-title">Inspector</div>
+        <div class="insp-field">Clip Name
+          <div class="insp-value">intro.mp4</div>
+        </div>
+        <div class="insp-field">Duration
+          <div class="insp-value">00:00:30</div>
+        </div>
+        <div class="insp-field">Resolution
+          <div class="insp-value">1920 × 1080</div>
+        </div>
+        <div class="insp-field">FPS
+          <div class="insp-value">29.97</div>
+        </div>
+        <div class="insp-field">Start Time
+          <div class="insp-value">00:00:00:00</div>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="timeline-panel">
+        <div class="tl-ruler">
+          <span>00:00</span><span>00:05</span><span>00:10</span><span>00:15</span>
+          <span>00:20</span><span>00:25</span><span>00:30</span>
+        </div>
+        <div class="tl-tracks" style="position:relative">
+          <div class="playhead"></div>
+
+          <!-- Video Track 1 -->
+          <div class="tl-track">
+            <div class="tl-track-label">
+              <svg width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" rx="2" fill="#6c7bff" opacity="0.7"/></svg>
+              V1
+            </div>
+            <div class="tl-track-area">
+              <div class="clip clip-v" style="left:0;width:30%">intro.mp4</div>
+              <div class="clip clip-v" style="left:32%;width:40%">demo.mp4</div>
+              <div class="clip clip-v" style="left:74%;width:20%">outro.mp4</div>
+            </div>
+          </div>
+
+          <!-- Audio Track 1 -->
+          <div class="tl-track">
+            <div class="tl-track-label">
+              <svg width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" rx="2" fill="#34d399" opacity="0.7"/></svg>
+              A1
+            </div>
+            <div class="tl-track-area">
+              <div class="clip clip-a" style="left:0;width:94%">music.mp3</div>
+            </div>
+          </div>
+
+          <!-- Audio Track 2 -->
+          <div class="tl-track">
+            <div class="tl-track-label" style="color:#555">
+              <svg width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" rx="2" fill="#34d399" opacity="0.3"/></svg>
+              A2
+            </div>
+            <div class="tl-track-area"></div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /main-area -->
+  </div><!-- /app-window -->
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SLIDE 3 — ARCHITECTURE -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="slide" id="arch">
+  <p class="section-label text-center">Architecture</p>
+  <h2 class="section-title text-center">Pure Rust Workspace</h2>
+  <p class="section-desc text-center">3 focused crates — clear separation of concerns with zero C++ dependencies.</p>
+
+  <div class="arch-grid">
+    <!-- vidcut-app -->
+    <div class="arch-card">
+      <div class="arch-icon">🖥️</div>
+      <div class="arch-name">vidcut-app</div>
+      <div class="arch-desc">Binary crate. UI entry point via eframe. All panels: Toolbar, Media Browser, Inspector, Preview, Timeline.</div>
+      <span class="arch-tag">Binary</span>
+      <span class="arch-tag">egui</span>
+      <span class="arch-tag">eframe</span>
+    </div>
+    <!-- vidcut-core -->
+    <div class="arch-card" style="border-color:rgba(167,139,250,0.25);">
+      <div class="arch-icon">⚙️</div>
+      <div class="arch-name">vidcut-core</div>
+      <div class="arch-desc">Library crate. Project model, Timeline, Track, Clip, MediaAsset, Command pattern with full Undo/Redo history.</div>
+      <span class="arch-tag" style="background:rgba(167,139,250,0.12);color:#a78bfa">Library</span>
+      <span class="arch-tag" style="background:rgba(167,139,250,0.12);color:#a78bfa">serde</span>
+      <span class="arch-tag" style="background:rgba(167,139,250,0.12);color:#a78bfa">Commands</span>
+    </div>
+    <!-- vidcut-media -->
+    <div class="arch-card" style="border-color:rgba(56,189,248,0.25);">
+      <div class="arch-icon">🎬</div>
+      <div class="arch-name">vidcut-media</div>
+      <div class="arch-desc">Library crate. FFmpeg wrappers, media probing, thumbnail generation, frame cache (LRU), audio decode.</div>
+      <span class="arch-tag" style="background:rgba(56,189,248,0.12);color:#38bdf8">Library</span>
+      <span class="arch-tag" style="background:rgba(56,189,248,0.12);color:#38bdf8">FFmpeg</span>
+      <span class="arch-tag" style="background:rgba(56,189,248,0.12);color:#38bdf8">wgpu</span>
+    </div>
+  </div>
+
+  <!-- SVG dependency arrow diagram -->
+  <svg width="min(700px,90vw)" height="100" viewBox="0 0 700 100" style="margin-top:36px; max-width:700px; width:90vw; overflow:visible">
+    <defs>
+      <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="rgba(108,123,255,0.6)"/>
+      </marker>
+    </defs>
+    <!-- boxes -->
+    <rect x="10"  y="30" width="160" height="44" rx="10" fill="rgba(108,123,255,0.12)" stroke="rgba(108,123,255,0.3)" stroke-width="1.5"/>
+    <text x="90"  y="57" text-anchor="middle" fill="#a0aec0" font-size="13" font-family="JetBrains Mono, monospace">vidcut-app</text>
+
+    <rect x="270" y="30" width="160" height="44" rx="10" fill="rgba(167,139,250,0.1)" stroke="rgba(167,139,250,0.3)" stroke-width="1.5"/>
+    <text x="350" y="57" text-anchor="middle" fill="#a0aec0" font-size="13" font-family="JetBrains Mono, monospace">vidcut-core</text>
+
+    <rect x="530" y="30" width="160" height="44" rx="10" fill="rgba(56,189,248,0.1)" stroke="rgba(56,189,248,0.3)" stroke-width="1.5"/>
+    <text x="610" y="57" text-anchor="middle" fill="#a0aec0" font-size="13" font-family="JetBrains Mono, monospace">vidcut-media</text>
+
+    <!-- arrows -->
+    <line x1="170" y1="52" x2="268" y2="52" stroke="rgba(108,123,255,0.5)" stroke-width="1.5" marker-end="url(#arr)">
+      <animate attributeName="stroke-dashoffset" values="20;0" dur="1.5s" repeatCount="indefinite"/>
+      <animate attributeName="stroke-dasharray" values="5 5" dur="0" fill="freeze"/>
+    </line>
+    <line x1="430" y1="52" x2="528" y2="52" stroke="rgba(167,139,250,0.5)" stroke-width="1.5" marker-end="url(#arr)">
+      <animate attributeName="stroke-dashoffset" values="20;0" dur="1.5s" repeatCount="indefinite"/>
+      <animate attributeName="stroke-dasharray" values="5 5" dur="0" fill="freeze"/>
+    </line>
+
+    <text x="219" y="46" text-anchor="middle" fill="rgba(108,123,255,0.6)" font-size="10" font-family="Inter">depends</text>
+    <text x="479" y="46" text-anchor="middle" fill="rgba(167,139,250,0.6)" font-size="10" font-family="Inter">depends</text>
+  </svg>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SLIDE 4 — TECH STACK -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="slide" id="techstack">
+  <p class="section-label text-center">Technology</p>
+  <h2 class="section-title text-center">Handpicked Rust Crates</h2>
+  <p class="section-desc text-center">Every dependency chosen for safety, performance, and native Windows integration.</p>
+
+  <div class="tech-flow">
+    <!-- SVG Tech Orbit -->
+    <svg width="100%" height="460" viewBox="0 0 900 460" style="overflow:visible">
+      <defs>
+        <radialGradient id="centerGlow">
+          <stop offset="0%" stop-color="#6c7bff" stop-opacity="0.4"/>
+          <stop offset="100%" stop-color="transparent"/>
+        </radialGradient>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="4" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      <!-- Center Rust logo area -->
+      <circle cx="450" cy="230" r="60" fill="url(#centerGlow)" filter="url(#glow)">
+        <animate attributeName="r" values="60;68;60" dur="3s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="1;0.7;1" dur="3s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="450" cy="230" r="50" fill="#1a1a2a" stroke="rgba(224,123,57,0.5)" stroke-width="2"/>
+      <text x="450" y="222" text-anchor="middle" fill="#e07b39" font-size="24" font-weight="900" font-family="Inter">🦀</text>
+      <text x="450" y="244" text-anchor="middle" fill="#e07b39" font-size="13" font-weight="700" font-family="JetBrains Mono, monospace">Rust</text>
+
+      <!-- Orbit rings -->
+      <circle cx="450" cy="230" r="150" fill="none" stroke="rgba(108,123,255,0.08)" stroke-width="1" stroke-dasharray="4 6">
+        <animateTransform attributeName="transform" type="rotate" from="0 450 230" to="360 450 230" dur="40s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="450" cy="230" r="210" fill="none" stroke="rgba(108,123,255,0.05)" stroke-width="1" stroke-dasharray="3 8">
+        <animateTransform attributeName="transform" type="rotate" from="360 450 230" to="0 450 230" dur="60s" repeatCount="indefinite"/>
+      </circle>
+
+      <!-- Orbit nodes — inner ring -->
+      <!-- egui -->
+      <g transform="translate(450,230)">
+        <g>
+          <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="40s" repeatCount="indefinite" additive="sum"/>
+          <circle cx="0" cy="-150" r="36" fill="#1a2a1a" stroke="rgba(52,211,153,0.5)" stroke-width="1.5"/>
+          <text x="0" y="-155" text-anchor="middle" fill="#34d399" font-size="10" font-weight="700" font-family="JetBrains Mono, monospace">egui</text>
+          <text x="0" y="-142" text-anchor="middle" fill="#34d399" font-size="9" font-family="Inter">+ eframe</text>
+
+          <!-- wgpu -->
+          <circle cx="150" cy="0" r="36" fill="#1a2a2a" stroke="rgba(56,189,248,0.5)" stroke-width="1.5"/>
+          <text x="150" y="-5" text-anchor="middle" fill="#38bdf8" font-size="10" font-weight="700" font-family="JetBrains Mono, monospace">wgpu</text>
+          <text x="150" y="8" text-anchor="middle" fill="#38bdf8" font-size="9" font-family="Inter">GPU</text>
+
+          <!-- tokio -->
+          <circle cx="0" cy="150" r="36" fill="#2a1a2a" stroke="rgba(167,139,250,0.5)" stroke-width="1.5"/>
+          <text x="0" y="145" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="700" font-family="JetBrains Mono, monospace">tokio</text>
+          <text x="0" y="158" text-anchor="middle" fill="#a78bfa" font-size="9" font-family="Inter">async</text>
+
+          <!-- windows-rs -->
+          <circle cx="-150" cy="0" r="36" fill="#1a1a2a" stroke="rgba(108,123,255,0.5)" stroke-width="1.5"/>
+          <text x="-150" y="-5" text-anchor="middle" fill="#6c7bff" font-size="9" font-weight="700" font-family="JetBrains Mono, monospace">windows-rs</text>
+          <text x="-150" y="8" text-anchor="middle" fill="#6c7bff" font-size="9" font-family="Inter">Win32</text>
+        </g>
+      </g>
+
+      <!-- Outer ring nodes -->
+      <g transform="translate(450,230)">
+        <g>
+          <animateTransform attributeName="transform" type="rotate" from="45" to="405" dur="60s" repeatCount="indefinite" additive="sum"/>
+          <circle cx="0" cy="-210" r="30" fill="#1a1a1a" stroke="rgba(224,123,57,0.4)" stroke-width="1"/>
+          <text x="0" y="-213" text-anchor="middle" fill="#e07b39" font-size="9" font-weight="700" font-family="JetBrains Mono, monospace">ffmpeg</text>
+          <text x="0" y="-202" text-anchor="middle" fill="#e07b39" font-size="8" font-family="Inter">-next</text>
+
+          <circle cx="210" cy="0" r="30" fill="#1a1a1a" stroke="rgba(52,211,153,0.3)" stroke-width="1"/>
+          <text x="210" y="-3" text-anchor="middle" fill="#34d399" font-size="9" font-weight="600" font-family="JetBrains Mono, monospace">serde</text>
+          <text x="210" y="8" text-anchor="middle" fill="#34d399" font-size="8" font-family="Inter">json</text>
+
+          <circle cx="0" cy="210" r="30" fill="#1a1a1a" stroke="rgba(248,113,113,0.35)" stroke-width="1"/>
+          <text x="0" y="207" text-anchor="middle" fill="#f87171" font-size="9" font-weight="600" font-family="JetBrains Mono, monospace">tracing</text>
+          <text x="0" y="218" text-anchor="middle" fill="#f87171" font-size="8" font-family="Inter">logs</text>
+
+          <circle cx="-210" cy="0" r="30" fill="#1a1a1a" stroke="rgba(167,139,250,0.3)" stroke-width="1"/>
+          <text x="-210" y="-3" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600" font-family="JetBrains Mono, monospace">parking_lot</text>
+          <text x="-210" y="8" text-anchor="middle" fill="#a78bfa" font-size="8" font-family="Inter">Mutex</text>
+
+          <!-- Diagonal nodes -->
+          <circle cx="148" cy="-148" r="28" fill="#1a1a1a" stroke="rgba(56,189,248,0.25)" stroke-width="1"/>
+          <text x="148" y="-151" text-anchor="middle" fill="#38bdf8" font-size="8" font-weight="600" font-family="JetBrains Mono, monospace">uuid</text>
+          <text x="148" y="-141" text-anchor="middle" fill="#38bdf8" font-size="8" font-family="Inter">IDs</text>
+
+          <circle cx="-148" cy="148" r="28" fill="#1a1a1a" stroke="rgba(108,123,255,0.25)" stroke-width="1"/>
+          <text x="-148" y="145" text-anchor="middle" fill="#6c7bff" font-size="8" font-weight="600" font-family="JetBrains Mono, monospace">winres</text>
+          <text x="-148" y="155" text-anchor="middle" fill="#6c7bff" font-size="8" font-family="Inter">resources</text>
+        </g>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SLIDE 5 — ROADMAP -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="slide" id="roadmap">
+  <p class="section-label">Development</p>
+  <h2 class="section-title">Roadmap</h2>
+  <p class="section-desc">From scaffold to AI-powered professional editor — 4 phases.</p>
+
+  <div class="roadmap-list">
+
+    <!-- Phase 1 -->
+    <div class="phase-item">
+      <div style="position:relative">
+        <div class="phase-num done">1</div>
+        <div class="phase-line done"></div>
+      </div>
+      <div class="phase-content">
+        <div class="phase-header">
+          <span class="phase-title">Scaffold &amp; Boilerplate</span>
+          <span class="phase-status status-done">✅ Complete</span>
+        </div>
+        <div class="phase-desc">Workspace setup, 5-panel UI layout, dark theme, Windows DPI-aware, project serialisation, undo/redo system.</div>
+        <div class="phase-features">
+          <span class="feat-tag">Workspace ✓</span>
+          <span class="feat-tag">Dark Theme ✓</span>
+          <span class="feat-tag">5-Panel Layout ✓</span>
+          <span class="feat-tag">Undo/Redo ✓</span>
+          <span class="feat-tag">.vidcut format ✓</span>
+          <span class="feat-tag">CI/CD ✓</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase 2 -->
+    <div class="phase-item">
+      <div style="position:relative">
+        <div class="phase-num active">2</div>
+        <div class="phase-line active"></div>
+      </div>
+      <div class="phase-content">
+        <div class="phase-header">
+          <span class="phase-title">Core Editing Features</span>
+          <span class="phase-status status-wip">🔨 In Progress</span>
+        </div>
+        <div class="phase-desc">FFmpeg media import, timeline drag editing, preview playback, export pipeline. Est. 9–12 weeks.</div>
+        <div class="phase-features">
+          <span class="feat-tag" style="border-color:rgba(108,123,255,0.3);color:var(--accent)">FFmpeg Import</span>
+          <span class="feat-tag" style="border-color:rgba(108,123,255,0.3);color:var(--accent)">Timeline Widget</span>
+          <span class="feat-tag" style="border-color:rgba(108,123,255,0.3);color:var(--accent)">Preview Playback</span>
+          <span class="feat-tag" style="border-color:rgba(108,123,255,0.3);color:var(--accent)">MP4 Export</span>
+          <span class="feat-tag" style="border-color:rgba(108,123,255,0.3);color:var(--accent)">Clip Drag</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase 3 -->
+    <div class="phase-item">
+      <div style="position:relative">
+        <div class="phase-num plan">3</div>
+        <div class="phase-line"></div>
+      </div>
+      <div class="phase-content">
+        <div class="phase-header">
+          <span class="phase-title">Advanced Editing</span>
+          <span class="phase-status status-plan">🔜 Planned</span>
+        </div>
+        <div class="phase-desc">Multi-track compositing, transitions, color grading with LUTs, audio mixer via WASAPI, GPU-accelerated decode.</div>
+        <div class="phase-features">
+          <span class="feat-tag">Multi-Track</span>
+          <span class="feat-tag">Transitions</span>
+          <span class="feat-tag">Color Grading</span>
+          <span class="feat-tag">LUT Import</span>
+          <span class="feat-tag">Audio Mixer</span>
+          <span class="feat-tag">WASAPI</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase 4 -->
+    <div class="phase-item">
+      <div style="position:relative">
+        <div class="phase-num plan">4</div>
+      </div>
+      <div class="phase-content">
+        <div class="phase-header">
+          <span class="phase-title">AI Features &amp; Plugin System</span>
+          <span class="phase-status status-plan">🔜 Planned</span>
+        </div>
+        <div class="phase-desc">AI scene detection, auto-cut, Real-ESRGAN upscaling, Whisper transcription, WASM plugin sandbox, export presets.</div>
+        <div class="phase-features">
+          <span class="feat-tag">Scene Detection</span>
+          <span class="feat-tag">Auto-Cut</span>
+          <span class="feat-tag">AI Upscaling</span>
+          <span class="feat-tag">Whisper STT</span>
+          <span class="feat-tag">WASM Plugins</span>
+          <span class="feat-tag">Plugin API</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SLIDE 6 — STATS -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="slide" id="stats">
+  <p class="section-label">By the Numbers</p>
+  <h2 class="section-title">Phase 1 Complete</h2>
+  <p class="section-desc">A solid foundation built in pure Rust with zero C++ dependencies.</p>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-num" id="cnt-crates">0</div>
+      <div class="stat-label">Rust Crates</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="cnt-panels">0</div>
+      <div class="stat-label">UI Panels</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="cnt-deps">0</div>
+      <div class="stat-label">Crate Dependencies</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="cnt-cpp">0%</div>
+      <div class="stat-label">C++ in Codebase</div>
+    </div>
+  </div>
+
+  <!-- SVG progress bars -->
+  <svg width="min(700px,90vw)" height="160" viewBox="0 0 700 160" style="margin-top:48px; max-width:700px; width:90vw;">
+    <defs>
+      <linearGradient id="pg1" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#6c7bff"/>
+        <stop offset="100%" stop-color="#a78bfa"/>
+      </linearGradient>
+      <linearGradient id="pg2" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#34d399"/>
+        <stop offset="100%" stop-color="#38bdf8"/>
+      </linearGradient>
+      <linearGradient id="pg3" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#e07b39"/>
+        <stop offset="100%" stop-color="#f87171"/>
+      </linearGradient>
+    </defs>
+
+    <!-- Phase 1 -->
+    <text x="0" y="20" fill="#e2e8f0" font-size="13" font-family="Inter" font-weight="600">Phase 1 — Scaffold</text>
+    <text x="680" y="20" fill="#34d399" font-size="12" font-family="JetBrains Mono, monospace" text-anchor="end">100%</text>
+    <rect x="0" y="28" width="680" height="10" rx="5" fill="rgba(255,255,255,0.06)"/>
+    <rect x="0" y="28" width="0" height="10" rx="5" fill="url(#pg1)" id="bar1">
+      <animate attributeName="width" from="0" to="680" dur="1.5s" fill="freeze" begin="0s"/>
+    </rect>
+
+    <!-- Phase 2 -->
+    <text x="0" y="68" fill="#e2e8f0" font-size="13" font-family="Inter" font-weight="600">Phase 2 — Core Editing</text>
+    <text x="680" y="68" fill="#6c7bff" font-size="12" font-family="JetBrains Mono, monospace" text-anchor="end">55%</text>
+    <rect x="0" y="76" width="680" height="10" rx="5" fill="rgba(255,255,255,0.06)"/>
+    <rect x="0" y="76" width="0" height="10" rx="5" fill="url(#pg2)" id="bar2">
+      <animate attributeName="width" from="0" to="374" dur="1.5s" fill="freeze" begin="0.3s"/>
+    </rect>
+
+    <!-- Phase 3 -->
+    <text x="0" y="116" fill="#e2e8f0" font-size="13" font-family="Inter" font-weight="600">Phase 3 — Advanced</text>
+    <text x="680" y="116" fill="#64748b" font-size="12" font-family="JetBrains Mono, monospace" text-anchor="end">0%</text>
+    <rect x="0" y="124" width="680" height="10" rx="5" fill="rgba(255,255,255,0.06)"/>
+
+    <!-- Phase 4 -->
+    <text x="0" y="152" fill="#e2e8f0" font-size="13" font-family="Inter" font-weight="600">Phase 4 — AI &amp; Plugins</text>
+    <text x="680" y="152" fill="#64748b" font-size="12" font-family="JetBrains Mono, monospace" text-anchor="end">0%</text>
+    <rect x="0" y="158" width="680" height="10" rx="5" fill="rgba(255,255,255,0.06)"/>
+  </svg>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SLIDE 7 — OUTRO -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="slide" id="outro">
+  <div class="outro-logo">VidCut</div>
+  <p class="outro-tagline">Professional Video Editor · 100% Rust · Open Source · MIT</p>
+
+  <!-- Animated scissors SVG -->
+  <svg width="80" height="80" viewBox="0 0 80 80" style="margin: 24px auto; display:block; opacity:0.7">
+    <g transform="translate(40,40)">
+      <!-- Handle 1 -->
+      <g>
+        <animateTransform attributeName="transform" type="rotate" values="0;-15;0" dur="2s" repeatCount="indefinite"/>
+        <circle cx="-20" cy="-15" r="10" fill="none" stroke="#6c7bff" stroke-width="2.5"/>
+        <line x1="-12" y1="-8" x2="18" y2="12" stroke="#6c7bff" stroke-width="2.5" stroke-linecap="round"/>
+      </g>
+      <!-- Handle 2 -->
+      <g>
+        <animateTransform attributeName="transform" type="rotate" values="0;15;0" dur="2s" repeatCount="indefinite"/>
+        <circle cx="-20" cy="15" r="10" fill="none" stroke="#a78bfa" stroke-width="2.5"/>
+        <line x1="-12" y1="8" x2="18" y2="-12" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round"/>
+      </g>
+    </g>
+  </svg>
+
+  <div class="outro-links">
+    <a href="https://github.com/goriant-studio/VidCut" class="link-btn primary" target="_blank">
+      ⭐ Star on GitHub
+    </a>
+    <a href="#hero" class="link-btn secondary">
+      ↑ Back to Top
+    </a>
+  </div>
+
+  <!-- Footer -->
+  <p style="margin-top:40px; font-size:12px; color:var(--muted)">
+    © 2026 Goriant Studio · MIT License · Built with 🦀 Rust
+  </p>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SCRIPTS -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<script>
+  // ── STARFIELD ─────────────────────────────────────────────
+  (function() {
+    const svg = document.querySelector('#starfield #stars');
+    const W = window.innerWidth, H = document.body.scrollHeight;
+    for (let i = 0; i < 120; i++) {
+      const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      const x = Math.random() * W;
+      const y = Math.random() * 6000; // spread across tall page
+      const r = Math.random() * 1.4 + 0.3;
+      const dur = (Math.random() * 4 + 2).toFixed(1);
+      c.setAttribute('cx', x);
+      c.setAttribute('cy', y);
+      c.setAttribute('r', r);
+      c.setAttribute('fill', 'rgba(200,210,255,0.7)');
+      const anim = document.createElementNS('http://www.w3.org/2000/svg','animate');
+      anim.setAttribute('attributeName','opacity');
+      anim.setAttribute('values','0.2;1;0.2');
+      anim.setAttribute('dur', dur + 's');
+      anim.setAttribute('repeatCount','indefinite');
+      anim.setAttribute('begin', (Math.random()*4).toFixed(1)+'s');
+      c.appendChild(anim);
+      svg.appendChild(c);
+    }
+  })();
+
+  // ── NAV DOTS ──────────────────────────────────────────────
+  const slides = ['hero','mockui','arch','techstack','roadmap','stats','outro'];
+  const dots = document.querySelectorAll('.nav-dot');
+
+  dots.forEach((dot, i) => {
+    dot.addEventListener('click', () => {
+      document.getElementById(slides[i]).scrollIntoView({behavior:'smooth'});
+    });
+  });
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        const idx = slides.indexOf(e.target.id);
+        dots.forEach(d => d.classList.remove('active'));
+        if (idx >= 0) dots[idx].classList.add('active');
+      }
+    });
+  }, { threshold: 0.4 });
+
+  slides.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) observer.observe(el);
+  });
+
+  // ── COUNTER ANIMATION ──────────────────────────────────────
+  function animateCount(el, target, suffix='', duration=1600) {
+    let start = null;
+    const step = (ts) => {
+      if (!start) start = ts;
+      const progress = Math.min((ts - start) / duration, 1);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      el.textContent = Math.round(ease * target) + suffix;
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  const statsObs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        animateCount(document.getElementById('cnt-crates'), 3);
+        animateCount(document.getElementById('cnt-panels'), 5);
+        animateCount(document.getElementById('cnt-deps'), 11);
+        animateCount(document.getElementById('cnt-cpp'), 0, '%');
+        statsObs.disconnect();
+      }
+    });
+  }, { threshold: 0.3 });
+  statsObs.observe(document.getElementById('stats'));
+
+  // ── ENTRANCE ANIMATIONS ON SCROLL ─────────────────────────
+  const fadeEls = document.querySelectorAll('.arch-card, .stat-card, .phase-item');
+  const fadeObs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.style.animation = 'fadeUp 0.7s ease both';
+        fadeObs.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+  fadeEls.forEach(el => { el.style.opacity = '0'; fadeObs.observe(el); });
+</script>
+</body>
+</html>

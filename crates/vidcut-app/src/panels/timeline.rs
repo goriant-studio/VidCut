@@ -1,21 +1,29 @@
 //! Timeline panel — bottom panel with track rows, clip blocks, and playhead.
 //!
-//! Phase 2: Renders actual tracks + clips from the project.
-//! - Clip blocks are clickable (select) and draggable (move).
-//! - Ruler click sets playhead.
-//! - Scroll wheel zooms in/out.
+//! Phase 2:
+//! - Clip blocks: click (select), drag body (move), drag left/right edge (trim).
+//! - Snap-to-grid: moves/trims snap to nearest frame boundary.
+//! - Overlap detection: prevents clips from overlapping on the same track.
+//! - Waveform display inside audio clips (deterministic pattern).
+//! - Thumbnail strip inside video clips (deterministic color pattern).
+//! - Ruler click sets playhead; scroll-wheel zooms.
 //! - Delete key removes selected clip (handled in app.rs keyboard shortcuts).
 
 use eframe::egui::{self, Color32, PointerButton, RichText, Sense, Stroke};
 use vidcut_core::TrackType;
 
-use crate::{app::VidCutApp, panels::theme};
+use crate::{
+    app::{TrimDragState, TrimEdge, VidCutApp},
+    panels::theme,
+};
 
 const TRACK_HEADER_WIDTH: f32 = 130.0;
 const TRACK_HEIGHT: f32 = 48.0;
 const RULER_HEIGHT: f32 = 22.0;
+const TRIM_HANDLE_WIDTH: f32 = 7.0;
 const MIN_PX_PER_SEC: f32 = 5.0;
 const MAX_PX_PER_SEC: f32 = 800.0;
+const MIN_CLIP_DURATION: f64 = 0.05; // 50 ms minimum clip length
 
 /// Show the timeline panel. Called every frame from [`VidCutApp::update`].
 pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
@@ -44,8 +52,9 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
                         ui.add_space(16.0);
 
                         let pps = app.timeline_px_per_sec;
+                        let fps = app.project.as_ref().map(|p| p.settings.fps).unwrap_or(30u32);
                         ui.label(
-                            RichText::new(format!("{pps:.0}px/s"))
+                            RichText::new(format!("{pps:.0}px/s  ·  {fps}fps"))
                                 .color(theme::TEXT_MUTED)
                                 .size(11.0),
                         );
@@ -79,6 +88,8 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
 
             let px_per_sec = app.timeline_px_per_sec;
             let total_secs = app.project_duration().max(30.0);
+            let fps = app.project.as_ref().map(|p| p.settings.fps).unwrap_or(30u32) as f64;
+            let frame_dur = if fps > 0.0 { 1.0 / fps } else { 1.0 / 30.0 };
             let available = ui.available_size();
 
             egui::ScrollArea::both()
@@ -93,13 +104,13 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
                     // ── Ruler ──────────────────────────────────────────────────
                     let ruler_resp = draw_ruler(ui, track_area_width, total_secs, px_per_sec);
                     if let Some(click_x) = ruler_resp {
-                        // click_x is relative to the ruler's content area start
-                        let secs = (click_x / px_per_sec) as f64;
+                        let raw_secs = (click_x / px_per_sec) as f64;
+                        // Snap to frame
+                        let secs = snap_to_frame(raw_secs, frame_dur);
                         app.playhead_secs = secs.max(0.0);
                     }
 
-                    // ── Tracks ─────────────────────────────────────────────────
-                    // Snapshot the project data we need without holding &mut app.
+                    // ── Snapshot project state (avoids split borrow) ────────────
                     let tracks_data: Vec<_> = app
                         .project
                         .as_ref()
@@ -119,7 +130,6 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
                     let playhead_secs = app.playhead_secs;
 
                     if tracks_data.is_empty() {
-                        // Empty state
                         ui.add_space(16.0);
                         ui.vertical_centered(|ui| {
                             ui.label(
@@ -130,9 +140,11 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
                         });
                     } else {
                         for (track_id, track_name, track_type, clips) in &tracks_data {
-                            let track_color = match track_type {
-                                TrackType::Video => Color32::from_rgb(0x4a, 0x5a, 0xff),
-                                TrackType::Audio => Color32::from_rgb(0x2a, 0xaa, 0x6a),
+                            let is_video = *track_type == TrackType::Video;
+                            let track_color = if is_video {
+                                Color32::from_rgb(0x4a, 0x5a, 0xff)
+                            } else {
+                                Color32::from_rgb(0x2a, 0xaa, 0x6a)
                             };
 
                             let (row_rect, _) = ui.allocate_exact_size(
@@ -161,11 +173,20 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
                                 track_color,
                             );
 
+                            // Track type icon
+                            let type_label = if is_video { "🎬" } else { "🎵" };
                             painter.text(
-                                header_rect.left_center() + egui::vec2(10.0, 0.0),
+                                header_rect.left_center() + egui::vec2(8.0, 0.0),
+                                egui::Align2::LEFT_CENTER,
+                                type_label,
+                                egui::FontId::proportional(12.0),
+                                track_color,
+                            );
+                            painter.text(
+                                header_rect.left_center() + egui::vec2(26.0, 0.0),
                                 egui::Align2::LEFT_CENTER,
                                 track_name.as_str(),
-                                egui::FontId::proportional(11.0),
+                                egui::FontId::proportional(10.0),
                                 theme::TEXT_PRIMARY,
                             );
 
@@ -188,13 +209,31 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
                                     egui::vec2(clip_w, TRACK_HEIGHT - 4.0),
                                 );
 
-                                let clip_color = if is_selected {
-                                    Color32::from_rgb(0x8a, 0x9a, 0xff)
+                                // ── Clip body color ────────────────────────────────
+                                let base_color = if is_video {
+                                    if is_selected {
+                                        Color32::from_rgb(0x7a, 0x8a, 0xff)
+                                    } else {
+                                        Color32::from_rgb(0x3a, 0x4a, 0xcc)
+                                    }
+                                } else if is_selected {
+                                    Color32::from_rgb(0x3a, 0xcc, 0x8a)
                                 } else {
-                                    Color32::from_rgb(0x3a, 0x4a, 0xcc)
+                                    Color32::from_rgb(0x1a, 0x88, 0x55)
                                 };
 
-                                painter.rect_filled(clip_rect, 4.0, clip_color);
+                                painter.rect_filled(clip_rect, 4.0, base_color);
+
+                                // ── Thumbnail strip (video) or Waveform (audio) ────
+                                if clip_w > 20.0 {
+                                    if is_video {
+                                        draw_thumbnail_strip(&painter, clip_rect, clip.asset_id);
+                                    } else {
+                                        draw_waveform(&painter, clip_rect, clip.id);
+                                    }
+                                }
+
+                                // ── Clip border ────────────────────────────────────
                                 painter.rect_stroke(
                                     clip_rect,
                                     4.0,
@@ -204,9 +243,8 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
                                     ),
                                 );
 
-                                // Clip label
+                                // ── Clip label ─────────────────────────────────────
                                 if clip_w > 30.0 {
-                                    // Lookup asset name from project
                                     let clip_name = app
                                         .project
                                         .as_ref()
@@ -214,64 +252,118 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
                                         .map(|a| a.name.as_str())
                                         .unwrap_or("Clip");
                                     painter.text(
-                                        clip_rect.left_center() + egui::vec2(6.0, 0.0),
-                                        egui::Align2::LEFT_CENTER,
+                                        clip_rect.left_top() + egui::vec2(TRIM_HANDLE_WIDTH + 2.0, 4.0),
+                                        egui::Align2::LEFT_TOP,
                                         clip_name,
                                         egui::FontId::proportional(10.0),
                                         Color32::WHITE,
                                     );
                                 }
 
-                                // Allocate interactive sense on the clip rect.
+                                // ── Trim handle rects ──────────────────────────────
+                                let left_handle = egui::Rect::from_min_size(
+                                    clip_rect.min,
+                                    egui::vec2(TRIM_HANDLE_WIDTH, clip_rect.height()),
+                                );
+                                let right_handle = egui::Rect::from_min_size(
+                                    egui::pos2(clip_rect.max.x - TRIM_HANDLE_WIDTH, clip_rect.min.y),
+                                    egui::vec2(TRIM_HANDLE_WIDTH, clip_rect.height()),
+                                );
+
+                                // Draw trim handle visual indicators
+                                let handle_color = Color32::from_rgba_premultiplied(0xff, 0xff, 0xff, 0x50);
+                                painter.rect_filled(left_handle, egui::Rounding { nw: 4.0, sw: 4.0, ne: 0.0, se: 0.0 }, handle_color);
+                                painter.rect_filled(right_handle, egui::Rounding { nw: 0.0, sw: 0.0, ne: 4.0, se: 4.0 }, handle_color);
+                                // Grip lines on handles
+                                let lx = left_handle.center().x;
+                                let rx = right_handle.center().x;
+                                let mid_y = clip_rect.center().y;
+                                for dy in [-4.0_f32, 0.0, 4.0] {
+                                    painter.line_segment(
+                                        [egui::pos2(lx - 1.0, mid_y + dy), egui::pos2(lx + 1.0, mid_y + dy)],
+                                        Stroke::new(1.0, Color32::from_rgba_premultiplied(0xff, 0xff, 0xff, 0xaa)),
+                                    );
+                                    painter.line_segment(
+                                        [egui::pos2(rx - 1.0, mid_y + dy), egui::pos2(rx + 1.0, mid_y + dy)],
+                                        Stroke::new(1.0, Color32::from_rgba_premultiplied(0xff, 0xff, 0xff, 0xaa)),
+                                    );
+                                }
+
+                                // ── Interact: left trim handle ─────────────────────
                                 let clip_id = clip.id;
-                                let original_start = clip.timeline_start;
-                                let clip_duration = clip.duration();
+                                let orig_ts = clip.timeline_start;
+                                let orig_te = clip.timeline_end;
+                                let orig_ss = clip.source_start;
+                                let orig_se = clip.source_end;
 
-                                let clip_resp = ui.allocate_rect(clip_rect, Sense::click_and_drag());
+                                // Body drag (move), but only the interior (excluding handles)
+                                let body_rect = egui::Rect::from_min_max(
+                                    clip_rect.min + egui::vec2(TRIM_HANDLE_WIDTH, 0.0),
+                                    clip_rect.max - egui::vec2(TRIM_HANDLE_WIDTH, 0.0),
+                                );
+                                let body_resp = ui.allocate_rect(body_rect, Sense::click_and_drag());
+                                // Trim left
+                                let left_resp = ui.allocate_rect(left_handle, Sense::drag());
+                                // Trim right
+                                let right_resp = ui.allocate_rect(right_handle, Sense::drag());
 
-                                if clip_resp.clicked() {
+                                // Show resize cursor on trim handles
+                                if left_resp.hovered() || right_resp.hovered() {
+                                    ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                                }
+
+                                // ── Body click / drag (move) ───────────────────────
+                                if body_resp.clicked() {
                                     app.selected_clip_id = Some(clip_id);
                                 }
 
-                                // Drag handling
-                                if clip_resp.drag_started_by(PointerButton::Primary) {
+                                if body_resp.drag_started_by(PointerButton::Primary) {
                                     app.selected_clip_id = Some(clip_id);
                                     app.dragging = Some(crate::app::DragState {
                                         clip_id,
                                         track_id: *track_id,
-                                        original_start,
-                                        duration: clip_duration,
-                                        current_start: original_start,
+                                        original_start: orig_ts,
+                                        duration: clip.duration(),
+                                        current_start: orig_ts,
                                     });
                                 }
 
-                                if clip_resp.dragged_by(PointerButton::Primary) {
+                                if body_resp.dragged_by(PointerButton::Primary) {
                                     if let Some(drag) = &mut app.dragging {
                                         if drag.clip_id == clip_id {
-                                            let delta_px = clip_resp.drag_delta().x;
+                                            let delta_px = body_resp.drag_delta().x;
                                             let delta_secs = delta_px as f64 / px_per_sec as f64;
-                                            drag.current_start = (drag.current_start + delta_secs).max(0.0);
+                                            let raw = (drag.current_start + delta_secs).max(0.0);
+                                            let snapped = snap_to_frame(raw, frame_dur);
 
-                                            // Apply live visual update directly (without command history).
-                                            if let Some(project) = &mut app.project {
-                                                if let Some(track) = project.timeline.tracks.iter_mut().find(|t| t.id == drag.track_id) {
-                                                    if let Some(c) = track.clips.iter_mut().find(|c| c.id == clip_id) {
-                                                        let new_start = drag.current_start.max(0.0);
-                                                        c.timeline_start = new_start;
-                                                        c.timeline_end = new_start + drag.duration;
+                                            // Overlap check
+                                            let proposed = snapped;
+                                            let allowed = if let Some(proj) = &app.project {
+                                                !would_overlap(proj, *track_id, clip_id, proposed, drag.duration)
+                                            } else {
+                                                true
+                                            };
+
+                                            if allowed {
+                                                drag.current_start = proposed;
+                                                if let Some(project) = &mut app.project {
+                                                    if let Some(track) = project.timeline.tracks.iter_mut().find(|t| t.id == drag.track_id) {
+                                                        if let Some(c) = track.clips.iter_mut().find(|c| c.id == clip_id) {
+                                                            c.timeline_start = proposed;
+                                                            c.timeline_end = proposed + drag.duration;
+                                                        }
                                                     }
+                                                    project.timeline.recompute_duration();
                                                 }
-                                                project.timeline.recompute_duration();
                                             }
                                         }
                                     }
                                 }
 
-                                if clip_resp.drag_stopped() {
+                                if body_resp.drag_stopped() {
                                     if let Some(drag) = app.dragging.take() {
                                         if drag.clip_id == clip_id {
                                             let new_start = drag.current_start;
-                                            // Only push command if actually moved.
                                             if (new_start - drag.original_start).abs() > 0.001 {
                                                 app.action_commit_move_clip(
                                                     drag.clip_id,
@@ -281,6 +373,126 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
                                                     drag.duration,
                                                 );
                                             }
+                                        }
+                                    }
+                                }
+
+                                // ── Left trim handle drag ──────────────────────────
+                                if left_resp.drag_started_by(PointerButton::Primary) {
+                                    app.selected_clip_id = Some(clip_id);
+                                    app.trim_dragging = Some(TrimDragState {
+                                        clip_id,
+                                        track_id: *track_id,
+                                        edge: TrimEdge::Left,
+                                        orig_timeline_start: orig_ts,
+                                        orig_timeline_end: orig_te,
+                                        orig_source_start: orig_ss,
+                                        orig_source_end: orig_se,
+                                        cur_timeline_start: orig_ts,
+                                        cur_timeline_end: orig_te,
+                                        cur_source_start: orig_ss,
+                                        cur_source_end: orig_se,
+                                    });
+                                }
+
+                                if left_resp.dragged_by(PointerButton::Primary) {
+                                    if let Some(td) = &mut app.trim_dragging {
+                                        if td.clip_id == clip_id && td.edge == TrimEdge::Left {
+                                            let delta_secs = left_resp.drag_delta().x as f64 / px_per_sec as f64;
+                                            let raw_new_start = (td.cur_timeline_start + delta_secs)
+                                                .max(0.0)
+                                                .min(td.cur_timeline_end - MIN_CLIP_DURATION);
+                                            let new_start = snap_to_frame(raw_new_start, frame_dur);
+                                            let trim_amount = new_start - td.orig_timeline_start;
+                                            td.cur_timeline_start = new_start;
+                                            td.cur_source_start = (td.orig_source_start + trim_amount).max(0.0);
+                                            // Apply live
+                                            if let Some(project) = &mut app.project {
+                                                if let Some(track) = project.timeline.tracks.iter_mut().find(|t| t.id == td.track_id) {
+                                                    if let Some(c) = track.clips.iter_mut().find(|c| c.id == clip_id) {
+                                                        c.timeline_start = td.cur_timeline_start;
+                                                        c.source_start = td.cur_source_start;
+                                                    }
+                                                }
+                                                project.timeline.recompute_duration();
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if left_resp.drag_stopped() {
+                                    if let Some(td) = app.trim_dragging.take() {
+                                        if td.clip_id == clip_id
+                                            && td.edge == TrimEdge::Left
+                                            && (td.cur_timeline_start - td.orig_timeline_start).abs() > 0.001
+                                        {
+                                            app.action_commit_trim_clip(
+                                                clip_id, td.track_id,
+                                                td.orig_timeline_start, td.orig_timeline_end,
+                                                td.orig_source_start, td.orig_source_end,
+                                                td.cur_timeline_start, td.cur_timeline_end,
+                                                td.cur_source_start, td.cur_source_end,
+                                            );
+                                        }
+                                    }
+                                }
+
+                                // ── Right trim handle drag ─────────────────────────
+                                if right_resp.drag_started_by(PointerButton::Primary) {
+                                    app.selected_clip_id = Some(clip_id);
+                                    app.trim_dragging = Some(TrimDragState {
+                                        clip_id,
+                                        track_id: *track_id,
+                                        edge: TrimEdge::Right,
+                                        orig_timeline_start: orig_ts,
+                                        orig_timeline_end: orig_te,
+                                        orig_source_start: orig_ss,
+                                        orig_source_end: orig_se,
+                                        cur_timeline_start: orig_ts,
+                                        cur_timeline_end: orig_te,
+                                        cur_source_start: orig_ss,
+                                        cur_source_end: orig_se,
+                                    });
+                                }
+
+                                if right_resp.dragged_by(PointerButton::Primary) {
+                                    if let Some(td) = &mut app.trim_dragging {
+                                        if td.clip_id == clip_id && td.edge == TrimEdge::Right {
+                                            let delta_secs = right_resp.drag_delta().x as f64 / px_per_sec as f64;
+                                            let raw_new_end = (td.cur_timeline_end + delta_secs)
+                                                .max(td.cur_timeline_start + MIN_CLIP_DURATION);
+                                            let new_end = snap_to_frame(raw_new_end, frame_dur);
+                                            let trim_amount = new_end - td.orig_timeline_end;
+                                            td.cur_timeline_end = new_end;
+                                            td.cur_source_end = (td.orig_source_end + trim_amount)
+                                                .max(td.cur_source_start + MIN_CLIP_DURATION);
+                                            // Apply live
+                                            if let Some(project) = &mut app.project {
+                                                if let Some(track) = project.timeline.tracks.iter_mut().find(|t| t.id == td.track_id) {
+                                                    if let Some(c) = track.clips.iter_mut().find(|c| c.id == clip_id) {
+                                                        c.timeline_end = td.cur_timeline_end;
+                                                        c.source_end = td.cur_source_end;
+                                                    }
+                                                }
+                                                project.timeline.recompute_duration();
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if right_resp.drag_stopped() {
+                                    if let Some(td) = app.trim_dragging.take() {
+                                        if td.clip_id == clip_id
+                                            && td.edge == TrimEdge::Right
+                                            && (td.cur_timeline_end - td.orig_timeline_end).abs() > 0.001
+                                        {
+                                            app.action_commit_trim_clip(
+                                                clip_id, td.track_id,
+                                                td.orig_timeline_start, td.orig_timeline_end,
+                                                td.orig_source_start, td.orig_source_end,
+                                                td.cur_timeline_start, td.cur_timeline_end,
+                                                td.cur_source_start, td.cur_source_end,
+                                            );
                                         }
                                     }
                                 }
@@ -369,6 +581,110 @@ fn draw_ruler(ui: &mut egui::Ui, width: f32, total_secs: f64, px_per_sec: f32) -
     } else {
         None
     }
+}
+
+/// Draw a fake but visually convincing waveform inside an audio clip block.
+fn draw_waveform(painter: &egui::Painter, clip_rect: egui::Rect, clip_id: uuid::Uuid) {
+    let bar_w = 3.0_f32;
+    let bar_gap = 1.0_f32;
+    let step = bar_w + bar_gap;
+    let max_h = (clip_rect.height() - 6.0).max(2.0);
+    let mid_y = clip_rect.center().y;
+    let left = clip_rect.min.x + TRIM_HANDLE_WIDTH + 2.0;
+    let right = clip_rect.max.x - TRIM_HANDLE_WIDTH - 2.0;
+    let waveform_color = Color32::from_rgba_premultiplied(0x80, 0xff, 0xb0, 0x55);
+
+    // Deterministic seed from clip UUID bytes
+    let bytes = clip_id.as_bytes();
+    let mut x = left;
+    let mut idx = 0usize;
+    while x + bar_w <= right {
+        let seed = bytes[idx % 16] as f32;
+        let h = (((seed * 7.0 + (x * 0.13).sin() * 50.0).abs() % 100.0) / 100.0 * max_h).max(2.0);
+        painter.rect_filled(
+            egui::Rect::from_center_size(
+                egui::pos2(x + bar_w * 0.5, mid_y),
+                egui::vec2(bar_w, h),
+            ),
+            1.0,
+            waveform_color,
+        );
+        x += step;
+        idx += 1;
+    }
+}
+
+/// Draw a fake thumbnail strip inside a video clip block.
+fn draw_thumbnail_strip(painter: &egui::Painter, clip_rect: egui::Rect, asset_id: uuid::Uuid) {
+    let thumb_w = clip_rect.height() - 4.0; // square thumbnails
+    let left = clip_rect.min.x + TRIM_HANDLE_WIDTH + 2.0;
+    let right = clip_rect.max.x - TRIM_HANDLE_WIDTH - 2.0;
+    let top = clip_rect.min.y + 2.0;
+
+    // Deterministic palette from asset UUID
+    let bytes = asset_id.as_bytes();
+    let base_r = bytes[0];
+    let base_g = bytes[1];
+    let base_b = bytes[2];
+
+    let mut x = left;
+    let mut idx = 0usize;
+    while x + thumb_w <= right {
+        let variation = bytes[idx % 16] as i16;
+        let r = ((base_r as i16 + variation / 4).clamp(0x10, 0x60)) as u8;
+        let g = ((base_g as i16 + variation / 3).clamp(0x10, 0x60)) as u8;
+        let b = ((base_b as i16 - variation / 4).clamp(0x20, 0x80)) as u8;
+        let thumb_rect = egui::Rect::from_min_size(
+            egui::pos2(x, top),
+            egui::vec2(thumb_w - 1.0, clip_rect.height() - 4.0),
+        );
+        painter.rect_filled(thumb_rect, 2.0, Color32::from_rgb(r, g, b));
+        // Play icon on first thumb
+        if idx == 0 {
+            painter.text(
+                thumb_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "▶",
+                egui::FontId::proportional(8.0),
+                Color32::from_rgba_premultiplied(0xff, 0xff, 0xff, 0x60),
+            );
+        }
+        x += thumb_w;
+        idx += 1;
+    }
+}
+
+/// Snap a time value to the nearest frame boundary.
+fn snap_to_frame(secs: f64, frame_dur: f64) -> f64 {
+    if frame_dur <= 0.0 {
+        return secs;
+    }
+    (secs / frame_dur).round() * frame_dur
+}
+
+/// Check if placing a clip at `start` with `duration` on `track_id` would overlap
+/// any other clip (excluding `clip_id` itself).
+fn would_overlap(
+    project: &vidcut_core::Project,
+    track_id: uuid::Uuid,
+    clip_id: uuid::Uuid,
+    start: f64,
+    duration: f64,
+) -> bool {
+    let end = start + duration;
+    if let Some(track) = project.timeline.tracks.iter().find(|t| t.id == track_id) {
+        for other in &track.clips {
+            if other.id == clip_id {
+                continue;
+            }
+            // Overlap if not (end <= other.start || start >= other.end)
+            let gap = 0.001;
+            if end > other.timeline_start + gap && start < other.timeline_end - gap {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn pick_tick_interval(secs_per_60px: f64) -> f64 {

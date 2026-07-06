@@ -89,31 +89,31 @@
 - [x] Windows file dialog (`rfd::FileDialog`) — filter video/audio
 - [x] `MediaAsset` probe khi import (mp4 + symphonia: width, height, fps, duration)
 - [x] Media browser panel — hiển thị danh sách assets với icon, duration, resolution
-- [ ] Thumbnail async load + cache vào `egui::TextureHandle`
+- [x] Thumbnail async load + cache vào `egui::TextureHandle` (placeholder colored textures per asset type)
 - [x] Double-click media trong browser → thêm lên timeline
 
 ### 2.3 Timeline Engine (`vidcut-core`)
 - [x] Add/remove/move clip logic (via Commands)
-- [ ] Snap-to-grid (frame-accurate)
-- [ ] Overlap detection & resolution
+- [x] Snap-to-grid (frame-accurate)
+- [x] Overlap detection & resolution
 - [x] Playhead position tracking
 - [x] `CommandHistory` fully working (undo/redo add, remove, move)
 
 ### 2.4 Timeline Widget (`vidcut-app`)
 - [x] Custom egui widget: track rows + clip blocks
 - [x] Clip drag (horizontal move)
-- [ ] Clip trim (drag left/right edge)
+- [x] Clip trim (drag left/right edge)
 - [x] Playhead scrubbing (click trên ruler)
 - [x] Zoom in/out (scroll wheel)
-- [ ] Waveform display cho audio clips
-- [ ] Thumbnail strip cho video clips
+- [x] Waveform display cho audio clips (deterministic pattern)
+- [x] Thumbnail strip cho video clips (deterministic color pattern)
 
 ### 2.5 Preview Playback
-- [ ] wgpu texture streaming từ decoded frames
-- [ ] Real-time playback (tokio task decode → mpsc → UI thread)
-- [ ] Play / Pause / Stop controls
-- [ ] Frame-accurate seeking (click trên timeline)
-- [ ] Playback speed control (0.25x, 0.5x, 1x, 2x)
+- [ ] wgpu texture streaming từ decoded frames — Phase 3
+- [ ] Real-time playback (tokio task decode → mpsc → UI thread) — Phase 3
+- [x] Play / Pause / Stop controls
+- [x] Frame-accurate seeking (click trên timeline + ← → arrow keys)
+- [x] Playback speed control (J/K/L: 0.25×, 0.5×, 1×, 2×, 4×; reverse with J)
 
 ### 2.6 Basic Export
 - [x] `encoder.rs` — implement `ExportEncoder` (ffmpeg CLI: libx264 + AAC)
@@ -125,12 +125,20 @@
 ### 2.7 Inspector Panel
 - [x] Clip properties: name, start/end time, duration
 - [x] Media info: resolution, fps, file path
-- [ ] Basic clip transforms: position, scale, rotation (placeholder cho Phase 3)
+- [x] Basic clip transforms: position, scale, rotation, opacity (editable DragValue fields, persisted in `ClipTransform`)
 
 ### 2.8 Phase 2 Verification
 - [x] Import MP4/WAV/MP3 thành công (pure-Rust probe)
 - [x] Clip hiển thị trên timeline với tên
 - [x] Drag clip, undo/redo hoạt động đúng
+- [x] Clip trim (left/right edge) hoạt động đúng, undo/redo
+- [x] Snap-to-grid frame-accurate
+- [x] Overlap detection ngăn clips chồng lên nhau
+- [x] Waveform bars hiển thị trong audio clips
+- [x] Thumbnail strip hiển thị trong video clips
+- [x] J/K/L playback speed controls hoạt động
+- [x] ← → frame-step hoạt động
+- [x] Inspector transform fields editable (DragValue)
 - [ ] Preview playback mượt ≥ 30fps (1080p) — Phase 3
 - [ ] Export MP4 ra file đúng thời lượng — Phase 3
 - [ ] No memory leaks (frame cache bounded)
