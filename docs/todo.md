@@ -116,11 +116,11 @@
 - [ ] Playback speed control (0.25x, 0.5x, 1x, 2x)
 
 ### 2.6 Basic Export
-- [ ] `encoder.rs` — implement `ExportEncoder` (ffmpeg-next: libx264 + AAC)
-- [ ] Export dialog: chọn output path, format (MP4/MOV), quality preset
-- [ ] Progress reporting qua `mpsc` channel → UI progress bar
-- [ ] Taskbar progress (ITaskbarList3 via windows-rs)
-- [ ] Cancel export
+- [x] `encoder.rs` — implement `ExportEncoder` (ffmpeg CLI: libx264 + AAC)
+- [x] Export dialog: chọn output path, format (MP4/MOV/MKV), quality preset
+- [x] Progress reporting qua `mpsc` channel → UI progress bar
+- [x] Taskbar progress (ITaskbarList3 via windows-rs)
+- [x] Cancel export
 
 ### 2.7 Inspector Panel
 - [x] Clip properties: name, start/end time, duration

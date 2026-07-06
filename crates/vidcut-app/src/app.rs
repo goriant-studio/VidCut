@@ -4,7 +4,7 @@
 //! and UI selection state. Each panel accesses and mutates app state through
 //! the public accessor/action methods defined here.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::mpsc};
 
 use eframe::egui;
 use uuid::Uuid;
@@ -13,9 +13,12 @@ use vidcut_core::{
         add_clip::AddClipCommand, delete_clip::DeleteClipCommand, move_clip::MoveClipCommand,
         CommandHistory,
     },
-    Clip, MediaAsset, AssetType, Project, Track, TrackType,
+    AssetType, Clip, MediaAsset, Project, Track, TrackType,
 };
-use vidcut_media::{probe_file, AssetKind};
+use vidcut_media::{
+    probe_file, AssetKind, ExportEncoder, ExportJob, ExportProgress, ExportSegment,
+    OutputFormat, QualityPreset,
+};
 
 use crate::panels;
 
@@ -45,6 +48,24 @@ pub struct VidCutApp {
     // ── Drag state ────────────────────────────────────────────────────────────
     /// While dragging a clip, stores (clip_id, track_id, original_start, drag_offset_secs).
     pub dragging: Option<DragState>,
+
+    // ── Export state ──────────────────────────────────────────────────────
+    /// Whether the export dialog is currently visible.
+    pub export_dialog_open: bool,
+    /// Chosen output path for the next / current export.
+    pub export_output_path: Option<PathBuf>,
+    /// Selected container format.
+    pub export_format: OutputFormat,
+    /// Selected quality preset.
+    pub export_quality: QualityPreset,
+    /// Running export encoder (held while export is in progress).
+    export_encoder: Option<ExportEncoder>,
+    /// mpsc receiver for progress updates from the encoder thread.
+    export_rx: Option<mpsc::Receiver<ExportProgress>>,
+    /// Progress fraction `[0, 1]` + last status line, while export is running.
+    pub export_progress: Option<(f32, String)>,
+    /// Last completed status message (success / error / cancelled).
+    pub export_status: Option<String>,
 }
 
 /// Temporary state while a clip is being dragged on the timeline.
@@ -71,6 +92,14 @@ impl VidCutApp {
             selected_clip_id: None,
             timeline_px_per_sec: 80.0,
             dragging: None,
+            export_dialog_open: false,
+            export_output_path: None,
+            export_format: OutputFormat::Mp4,
+            export_quality: QualityPreset::Medium,
+            export_encoder: None,
+            export_rx: None,
+            export_progress: None,
+            export_status: None,
         }
     }
 
@@ -178,8 +207,170 @@ impl VidCutApp {
         }
     }
 
+    /// Open the export dialog.
     pub fn action_export(&mut self) {
-        tracing::info!("Export — Phase 3");
+        // Reset status message so a fresh dialog doesn't show stale result.
+        if self.export_progress.is_none() {
+            self.export_status = None;
+        }
+        self.export_dialog_open = true;
+    }
+
+    /// Build the [`ExportJob`] from the current project and start encoding.
+    pub fn action_start_export(&mut self) {
+        let output_path = match &self.export_output_path {
+            Some(p) => p.clone(),
+            None => {
+                self.export_status = Some("✗ No output path selected.".to_owned());
+                return;
+            }
+        };
+
+        let project = match &self.project {
+            Some(p) => p.clone(),
+            None => {
+                self.export_status = Some("✗ No project open.".to_owned());
+                return;
+            }
+        };
+
+        // Build a flat ordered list of segments from all tracks.
+        let mut segments: Vec<ExportSegment> = Vec::new();
+
+        // Collect all clips sorted by timeline_start.
+        let mut all_clips: Vec<_> = project
+            .timeline
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter().map(move |c| (t.track_type.clone(), c.clone())))
+            .collect();
+        all_clips.sort_by(|a, b| a.1.timeline_start.partial_cmp(&b.1.timeline_start).unwrap());
+
+        for (_track_type, clip) in &all_clips {
+            if let Some(asset) = project.media_pool.iter().find(|a| a.id == clip.asset_id) {
+                segments.push(ExportSegment {
+                    source_path: asset.path.clone(),
+                    source_start: clip.source_start,
+                    duration: clip.duration().max(0.01),
+                    has_video: matches!(asset.asset_type, AssetType::Video),
+                    has_audio: matches!(asset.asset_type, AssetType::Video | AssetType::Audio),
+                });
+            }
+        }
+
+        if segments.is_empty() {
+            self.export_status = Some("✗ Timeline is empty — add some clips first.".to_owned());
+            return;
+        }
+
+        let job = ExportJob {
+            segments,
+            output_path,
+            format: self.export_format,
+            quality: self.export_quality,
+            fps: project.settings.fps,
+            width: project.settings.width,
+            height: project.settings.height,
+        };
+
+        match ExportEncoder::begin(job) {
+            Ok((encoder, rx)) => {
+                self.export_encoder = Some(encoder);
+                self.export_rx = Some(rx);
+                self.export_progress = Some((0.0, "Starting…".to_owned()));
+                self.export_status = None;
+                tracing::info!("Export started.");
+            }
+            Err(e) => {
+                self.export_status = Some(format!("✗ {e}"));
+                tracing::error!("Export failed to start: {e}");
+            }
+        }
+    }
+
+    /// Kill the running export.
+    pub fn action_cancel_export(&mut self) {
+        if let Some(encoder) = self.export_encoder.take() {
+            encoder.cancel();
+        }
+        self.export_rx = None;
+        self.export_progress = None;
+        self.export_status = Some("Export cancelled.".to_owned());
+        tracing::info!("Export cancelled by user.");
+    }
+
+    /// Poll the mpsc channel for progress updates from the encoder thread.
+    /// Must be called every frame while export is in progress.
+    pub fn poll_export_progress(&mut self, ctx: &egui::Context) {
+        if self.export_rx.is_none() {
+            return;
+        }
+
+        // Drain all pending messages (non-blocking).
+        loop {
+            let msg = match &self.export_rx {
+                Some(rx) => rx.try_recv(),
+                None => break,
+            };
+
+            match msg {
+                Ok(ExportProgress::Progress { fraction, message }) => {
+                    self.export_progress = Some((fraction, message));
+                    // Keep UI repainting while export is running.
+                    ctx.request_repaint();
+                }
+                Ok(ExportProgress::Done { output_path }) => {
+                    self.export_progress = None;
+                    self.export_encoder = None;
+                    self.export_rx = None;
+                    self.export_status =
+                        Some(format!("✓ Export complete: {}", output_path.display()));
+                    tracing::info!("Export done: {:?}", output_path);
+
+                    // Update Windows taskbar progress to indeterminate-done.
+                    #[cfg(target_os = "windows")]
+                    taskbar_set_complete();
+                    break;
+                }
+                Ok(ExportProgress::Failed { message }) => {
+                    self.export_progress = None;
+                    self.export_encoder = None;
+                    self.export_rx = None;
+                    self.export_status = Some(format!("✗ Export failed: {message}"));
+                    tracing::error!("Export failed: {message}");
+
+                    #[cfg(target_os = "windows")]
+                    taskbar_clear();
+                    break;
+                }
+                Ok(ExportProgress::Cancelled) => {
+                    self.export_progress = None;
+                    self.export_encoder = None;
+                    self.export_rx = None;
+                    if self.export_status.is_none() {
+                        self.export_status = Some("Export cancelled.".to_owned());
+                    }
+
+                    #[cfg(target_os = "windows")]
+                    taskbar_clear();
+                    break;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    // Thread exited without sending Done/Failed — treat as cancelled.
+                    self.export_progress = None;
+                    self.export_encoder = None;
+                    self.export_rx = None;
+                    break;
+                }
+            }
+        }
+
+        // Update taskbar progress bar on Windows.
+        #[cfg(target_os = "windows")]
+        if let Some((fraction, _)) = &self.export_progress {
+            taskbar_set_progress(*fraction);
+        }
     }
 
     // ── Media import ──────────────────────────────────────────────────────────
@@ -405,5 +596,59 @@ impl eframe::App for VidCutApp {
         panels::media_browser::show(ctx, self);
         panels::inspector::show(ctx, self);
         panels::preview::show(ctx, self);
+        // Export dialog (modal, rendered on top of all other panels).
+        panels::export_dialog::show(ctx, self);
     }
+}
+
+// ─── Windows Taskbar Progress ─────────────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+fn with_taskbar<F: FnOnce(&windows::Win32::UI::Shell::ITaskbarList3)>(f: F) {
+    use windows::{
+        Win32::{
+            System::Com::{
+                CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+            },
+            UI::Shell::{ITaskbarList3, TaskbarList},
+        },
+    };
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        if let Ok(tbl) =
+            CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER)
+        {
+            f(&tbl);
+        }
+    }
+}
+
+/// Set Windows taskbar progress bar to `fraction` (0.0–1.0).
+#[cfg(target_os = "windows")]
+fn taskbar_set_progress(fraction: f32) {
+    use windows::Win32::{Foundation::HWND, UI::Shell::TBPFLAG};
+    with_taskbar(|tbl| unsafe {
+        let _ = tbl.SetProgressState(HWND(0 as _), TBPFLAG(0x2)); // TBPF_NORMAL
+        let completed = (fraction * 10_000.0) as u64;
+        let _ = tbl.SetProgressValue(HWND(0 as _), completed, 10_000);
+    });
+}
+
+/// Set Windows taskbar progress to complete (full green bar).
+#[cfg(target_os = "windows")]
+fn taskbar_set_complete() {
+    use windows::Win32::{Foundation::HWND, UI::Shell::TBPFLAG};
+    with_taskbar(|tbl| unsafe {
+        let _ = tbl.SetProgressValue(HWND(0 as _), 10_000, 10_000);
+        let _ = tbl.SetProgressState(HWND(0 as _), TBPFLAG(0x2)); // TBPF_NORMAL at 100%
+    });
+}
+
+/// Clear the Windows taskbar progress bar.
+#[cfg(target_os = "windows")]
+fn taskbar_clear() {
+    use windows::Win32::{Foundation::HWND, UI::Shell::TBPFLAG};
+    with_taskbar(|tbl| unsafe {
+        let _ = tbl.SetProgressState(HWND(0 as _), TBPFLAG(0x0)); // TBPF_NOPROGRESS
+    });
 }

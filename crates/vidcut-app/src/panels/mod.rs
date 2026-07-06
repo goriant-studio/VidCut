@@ -8,6 +8,7 @@
 //! - [`timeline`] — bottom panel with track rows
 //! - [`theme`] — dark theme setup
 
+pub mod export_dialog;
 pub mod inspector;
 pub mod media_browser;
 pub mod preview;

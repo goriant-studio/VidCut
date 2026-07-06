@@ -13,3 +13,7 @@ pub mod thumbnail;
 
 // Re-export the most commonly used items at crate root.
 pub use decoder::{probe_file, AssetKind, MediaInfo};
+pub use encoder::{
+    ffmpeg_available, ExportEncoder, ExportJob, ExportProgress, ExportSegment,
+    OutputFormat, QualityPreset,
+};

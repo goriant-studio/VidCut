@@ -23,6 +23,7 @@ anyhow.workspace          = true
 tracing.workspace         = true
 tracing-subscriber.workspace = true
 uuid.workspace            = true
+windows.workspace         = true
 
 [build-dependencies]
 winres = "0.1"
