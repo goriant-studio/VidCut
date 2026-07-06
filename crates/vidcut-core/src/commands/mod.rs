@@ -5,6 +5,8 @@
 //! enabling arbitrarily deep undo and redo.
 
 pub mod add_clip;
+pub mod delete_clip;
+pub mod move_clip;
 pub mod trim_clip;
 
 use crate::Timeline;

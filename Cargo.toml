@@ -15,8 +15,12 @@ egui_extras     = "0.30"
 # Async
 tokio           = { version = "1", features = ["full"] }
 
-# Media (used in Phase 2 — not pulled in by any Phase 1 crate)
-# ffmpeg-next   = "7"
+# File dialogs (native OS dialog, no C deps)
+rfd             = "0.15"
+
+# Media probing — pure Rust, no FFmpeg needed for Phase 2 basic
+mp4             = "0.14"
+symphonia       = { version = "0.5", features = ["all"] }
 
 # Windows native
 windows         = { version = "0.58", features = [

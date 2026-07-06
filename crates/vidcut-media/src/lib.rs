@@ -1,15 +1,15 @@
-//! `vidcut-media` — FFmpeg wrappers and media utilities for VidCut.
+//! `vidcut-media` — media utilities for VidCut.
 //!
-//! **Phase 1**: This crate contains stub types only. All methods that require
-//! the FFmpeg C library are marked with `todo!("Phase 2: …")`.
+//! **Phase 2 (basic):** Pure-Rust probing via `mp4` + `symphonia`.
+//! No FFmpeg C-library required at this stage.
 //!
-//! **Phase 2**: Replace stubs with real implementations using `ffmpeg-next`.
-//!
-//! This crate is the *only* place in the workspace where `unsafe` FFI code
-//! is permitted.
+//! **Phase 3:** Full decode pipeline with `ffmpeg-next`.
 
 pub mod audio;
 pub mod decoder;
 pub mod encoder;
 pub mod frame_cache;
 pub mod thumbnail;
+
+// Re-export the most commonly used items at crate root.
+pub use decoder::{probe_file, AssetKind, MediaInfo};

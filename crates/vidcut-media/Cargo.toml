@@ -6,9 +6,13 @@ description = "VidCut media layer — FFmpeg wrappers and frame cache (Phase 2 i
 license = "MIT"
 
 [dependencies]
-# Phase 1: stubs only — no FFmpeg bindings needed yet.
-# Phase 2 will add: ffmpeg-next.workspace = true, tokio.workspace = true, parking_lot.workspace = true
 anyhow.workspace    = true
 thiserror.workspace = true
 serde.workspace     = true
 uuid.workspace      = true
+tokio.workspace     = true
+tracing.workspace   = true
+
+# Pure-Rust media probing — no C library deps
+mp4.workspace       = true
+symphonia.workspace = true

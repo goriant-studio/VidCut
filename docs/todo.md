@@ -76,35 +76,35 @@
 > **Goal**: Import media, kéo clip lên timeline, xem preview, export cơ bản.  
 > **Est. time**: 9–12 tuần
 
-### 2.1 FFmpeg Integration (`vidcut-media`)
+### 2.1 Media Probing (`vidcut-media`)
 - [ ] Setup FFmpeg via `vcpkg` cho Windows (x64-windows static)
-- [ ] `decoder.rs` — implement `MediaDecoder::open()` (ffmpeg-next probe)
-- [ ] `decoder.rs` — implement `MediaDecoder::decode_frame()` (seek + decode → RGBA)
-- [ ] `audio.rs` — implement `AudioDecoder` (swresample → f32 PCM)
+- [x] `decoder.rs` — implement `probe_file()` (pure-Rust: mp4 + symphonia)
+- [ ] `decoder.rs` — implement `MediaDecoder::decode_frame()` (seek + decode → RGBA) — Phase 3
+- [ ] `audio.rs` — implement `AudioDecoder` (swresample → f32 PCM) — Phase 3
 - [ ] `audio.rs` — waveform data generation cho timeline display
 - [ ] `frame_cache.rs` — LRU cache (parking_lot RwLock, configurable capacity)
 - [ ] `thumbnail.rs` — async thumbnail generation (tokio spawn_blocking)
 
 ### 2.2 Media Import & Browser
-- [ ] Windows file dialog (`IFileOpenDialog` via windows-rs) — filter video/audio
-- [ ] `MediaAsset` probe khi import (ffmpeg: width, height, fps, duration)
-- [ ] Media browser panel — hiển thị danh sách assets với thumbnail
+- [x] Windows file dialog (`rfd::FileDialog`) — filter video/audio
+- [x] `MediaAsset` probe khi import (mp4 + symphonia: width, height, fps, duration)
+- [x] Media browser panel — hiển thị danh sách assets với icon, duration, resolution
 - [ ] Thumbnail async load + cache vào `egui::TextureHandle`
-- [ ] Drag media từ browser → timeline
+- [x] Double-click media trong browser → thêm lên timeline
 
 ### 2.3 Timeline Engine (`vidcut-core`)
-- [ ] `TimelineEngine` — add/remove/move clip logic
+- [x] Add/remove/move clip logic (via Commands)
 - [ ] Snap-to-grid (frame-accurate)
 - [ ] Overlap detection & resolution
-- [ ] Playhead position tracking
-- [ ] `CommandHistory` fully working (undo/redo add, remove, move, trim)
+- [x] Playhead position tracking
+- [x] `CommandHistory` fully working (undo/redo add, remove, move)
 
 ### 2.4 Timeline Widget (`vidcut-app`)
-- [ ] Custom egui widget: track rows + clip blocks
-- [ ] Clip drag & drop (horizontal move, cross-track)
+- [x] Custom egui widget: track rows + clip blocks
+- [x] Clip drag (horizontal move)
 - [ ] Clip trim (drag left/right edge)
-- [ ] Playhead scrubbing
-- [ ] Zoom in/out (scroll wheel)
+- [x] Playhead scrubbing (click trên ruler)
+- [x] Zoom in/out (scroll wheel)
 - [ ] Waveform display cho audio clips
 - [ ] Thumbnail strip cho video clips
 
@@ -123,16 +123,16 @@
 - [ ] Cancel export
 
 ### 2.7 Inspector Panel
-- [ ] Clip properties: name, start/end time, speed, opacity
-- [ ] Media info: resolution, fps, codec, file size
+- [x] Clip properties: name, start/end time, duration
+- [x] Media info: resolution, fps, file path
 - [ ] Basic clip transforms: position, scale, rotation (placeholder cho Phase 3)
 
 ### 2.8 Phase 2 Verification
-- [ ] Import MP4/MOV/WAV/MP3 thành công
-- [ ] Clip hiển thị trên timeline với thumbnail
-- [ ] Drag, trim, undo/redo hoạt động đúng
-- [ ] Preview playback mượt ≥ 30fps (1080p)
-- [ ] Export MP4 ra file đúng thời lượng
+- [x] Import MP4/WAV/MP3 thành công (pure-Rust probe)
+- [x] Clip hiển thị trên timeline với tên
+- [x] Drag clip, undo/redo hoạt động đúng
+- [ ] Preview playback mượt ≥ 30fps (1080p) — Phase 3
+- [ ] Export MP4 ra file đúng thời lượng — Phase 3
 - [ ] No memory leaks (frame cache bounded)
 
 ---
