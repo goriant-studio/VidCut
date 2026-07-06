@@ -1,0 +1,14 @@
+[build]
+# Use GNU target so GCC/ld linker is used instead of MSVC link.exe.
+# Switch back to x86_64-pc-windows-msvc once VS Build Tools are installed.
+target = "x86_64-pc-windows-gnu"
+# Redirect build artifacts away from D:\ (AppLocker workaround)
+target-dir = "C:\\Users\\mrkin\\.cargo\\targets\\vidcut"
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "target-cpu=native"]
+# Use Strawberry Perl's MinGW GCC (available on PATH)
+linker = "C:\\Strawberry\\c\\bin\\gcc.exe"
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=native"]

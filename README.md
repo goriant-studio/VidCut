@@ -1,90 +1,115 @@
 # VidCut
 
-![Build](https://github.com/goriant-studio/VidCut/actions/workflows/windows-build.yml/badge.svg)
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
-![Qt6](https://img.shields.io/badge/Qt-6-green.svg)
-![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
+> **Professional Video Editor for Windows — built entirely in Rust**
 
-**A professional, open-source video editor for Windows — inspired by Final Cut Pro.**
+[![Windows Build](https://github.com/goriant-studio/VidCut/actions/workflows/windows-build.yml/badge.svg)](https://github.com/goriant-studio/VidCut/actions/workflows/windows-build.yml)
+[![Rust Version](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Built with native C++20, Qt6, and FFmpeg for maximum performance and a premium editing experience.
+VidCut is an open-source, native Windows video editor inspired by Final Cut Pro.
+Built 100% in Rust — no C++, no Qt, no Electron — delivering maximum performance,
+memory safety, and a modern native feel via **egui + wgpu**.
 
 ---
 
-## Features (Roadmap)
+## Features (Phase 1 — Scaffold)
 
-| Status | Feature |
-|--------|---------|
-| 🚧 | Project scaffold & architecture |
-| 📋 | Import MP4/MOV/MKV media |
-| 📋 | Non-linear timeline with drag & drop |
-| 📋 | Real-time preview (OpenGL) |
-| 📋 | Trim, cut, split clips |
-| 📋 | Multi-track video + audio |
-| 📋 | Transitions & effects |
-| 📋 | Color grading |
-| 📋 | Audio mixer |
-| 📋 | Export (H.264/H.265/ProRes) |
-| 📋 | AI-assisted features |
+- 🖤 **Dark theme** — Final Cut Pro-inspired palette (#1a1a1f background, #6c7bff accent)
+- 🖼️ **5-panel layout** — Toolbar · Media Browser · Inspector · Preview · Timeline
+- 📐 **Windows DPI-aware** — PerMonitorV2 manifest for crisp rendering on HiDPI displays
+- 🦀 **Pure Rust workspace** — `vidcut-app` / `vidcut-core` / `vidcut-media`
+- 🔄 **Undo/Redo** — Command pattern with full history
+- 💾 **Project serialisation** — `.vidcut` JSON format via `serde_json`
+
+### Roadmap
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| 1 | Scaffold & boilerplate | ✅ **Done** |
+| 2 | FFmpeg import, timeline editing, preview playback | 🔜 Planned |
+| 3 | Multi-track, transitions, color grading, audio mixer | 🔜 Planned |
+| 4 | AI features, plugin system | 🔜 Planned |
+
+---
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Language | C++20 |
-| UI Framework | Qt6 (Widgets + QML) |
-| Video/Audio | FFmpeg (libavcodec, libavformat, libswscale) |
-| Rendering | OpenGL via QOpenGLWidget |
-| Logging | spdlog |
-| Build | CMake 3.25+ + vcpkg |
-| CI | GitHub Actions (Windows MSVC) |
+| Crate | Purpose |
+|-------|---------|
+| `eframe` + `egui` | Immediate mode GUI (wgpu backend) |
+| `egui_extras` | Extra widgets |
+| `ffmpeg-next` | FFmpeg bindings (Phase 2) |
+| `windows-rs` | Win32/COM APIs — dialogs, taskbar, DXGI |
+| `tokio` | Async runtime for decode/export tasks |
+| `wgpu` | GPU rendering for preview |
+| `serde` + `serde_json` | Project file serialisation |
+| `anyhow` + `thiserror` | Error handling |
+| `parking_lot` | Fast Mutex/RwLock |
+| `tracing` | Structured logging |
+| `winres` | Embed manifest + icon at build time |
+| `uuid` | Unique IDs for tracks, clips, assets |
+
+---
+
+## Prerequisites
+
+- **Rust stable** (MSVC toolchain): [rustup.rs](https://rustup.rs)
+- **Visual Studio 2022** (or Build Tools) with the **Desktop C++ workload**
+  - Provides `link.exe`, `rc.exe`, and the Windows SDK
+- **Windows 10 / 11** (x86_64)
+
+> **Phase 2 prerequisite**: `vcpkg install ffmpeg:x64-windows` for FFmpeg bindings.
+
+---
 
 ## Building
 
-### Prerequisites
-
-- Windows 10/11
-- [Visual Studio 2022](https://visualstudio.microsoft.com/) (Desktop C++ workload)
-- [CMake 3.25+](https://cmake.org/)
-- [vcpkg](https://github.com/microsoft/vcpkg)
-
-### Steps
-
 ```powershell
-# 1. Clone
-git clone https://github.com/goriant-studio/VidCut.git
-cd VidCut
+# Add the MSVC target (one-time)
+rustup target add x86_64-pc-windows-msvc
 
-# 2. Configure (vcpkg installs dependencies automatically)
-cmake -B build -S . `
-  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-  -DCMAKE_BUILD_TYPE=Release
+# Check all crates
+cargo check --workspace
 
-# 3. Build
-cmake --build build --config Release --parallel
+# Run in development mode
+cargo run -p vidcut-app
 
-# 4. Run
-.\build\src\Release\VidCut.exe
+# Release build  →  target/release/vidcut.exe
+cargo build --workspace --release
 ```
 
-## Architecture
+### Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `RUST_LOG` | Log filter, e.g. `RUST_LOG=debug cargo run -p vidcut-app` |
+| `RUST_BACKTRACE` | Set to `1` for full backtraces on panic |
+
+---
+
+## Project Structure
 
 ```
-VidCut/
-├── src/
-│   ├── main.cpp
-│   ├── ui/              # Qt6 widgets (MainWindow, Timeline, Preview…)
-│   └── media/           # FFmpeg wrappers (Decoder, Encoder, Thumbnails…)
-├── libs/
-│   └── libvidcut/       # Core engine (Timeline, Clip, Project, Undo/Redo)
-└── resources/           # Icons, QSS theme, Windows resources
+vidcut/
+├── Cargo.toml                  ← workspace root
+├── crates/
+│   ├── vidcut-app/             ← binary: UI + eframe entry point
+│   ├── vidcut-core/            ← library: project model, timeline, commands
+│   └── vidcut-media/           ← library: FFmpeg wrappers (stubs in Phase 1)
+├── resources/
+│   ├── icons/vidcut.ico        ← app icon
+│   └── vidcut.manifest         ← Windows DPI + compat manifest
+└── .github/workflows/          ← GitHub Actions CI
 ```
+
+---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup and coding guidelines.
+
+---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE) © 2026 Goriant Studio

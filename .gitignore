@@ -1,51 +1,32 @@
-# Build output
-build/
-out/
-cmake-build-*/
+# Rust / Cargo
+/target/
+Cargo.lock
 
-# CMake
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-Makefile
-*.cmake
-!CMakeLists.txt
-
-# vcpkg
-vcpkg_installed/
-
-# Qt
-*.pro.user
-*.qmlc
-*.jsc
-moc_*.cpp
-qrc_*.cpp
-ui_*.h
-
-# MSVC
-*.obj
+# Debug symbols / linker artifacts
 *.pdb
 *.ilk
 *.exp
-*.lib
-*.dll
-*.exe
+*.lib.d
+
+# Environment secrets
+.env
+.env.*
+
+# IDE / editor configs (keep .editorconfig)
+.idea/
+.vscode/settings.json
+.vscode/launch.json
 *.user
 *.suo
-*.sdf
-*.opensdf
-.vs/
-*.VC.db
-*.VC.opendb
-ipch/
 
-# CLion / VS Code
-.idea/
-.vscode/
-*.kdev4
+# FFmpeg (if installed locally)
+FFmpeg/
+ffmpeg/
 
-# macOS
+# OS artifacts
+Thumbs.db
 .DS_Store
+desktop.ini
 
-# Logs
-*.log
+# Build scripts output
+make_ico.ps1

@@ -1,40 +1,68 @@
-name: Windows Build
+name: Windows Build (Rust)
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
     branches: [main]
 
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
 jobs:
   build:
+    name: Build & Test (Windows MSVC)
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # ── Checkout ──────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
+      # ── Rust toolchain ────────────────────────────────────────────────────────
+      - name: Install Rust stable (MSVC)
+        uses: dtolnay/rust-toolchain@stable
         with:
-          vcpkgGitCommitId: '2024.12.16'
+          targets: x86_64-pc-windows-msvc
+          components: clippy, rustfmt
 
-      - name: Cache vcpkg
+      # ── Caching ───────────────────────────────────────────────────────────────
+      - name: Cache Cargo registry & build artefacts
         uses: actions/cache@v4
         with:
-          path: vcpkg_installed
-          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      - name: Configure CMake
-        run: |
-          cmake -B build -S . `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DCMAKE_BUILD_TYPE=Release
+      # ── Formatting ────────────────────────────────────────────────────────────
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-      - name: Build
-        run: cmake --build build --config Release --parallel
+      # ── Clippy ────────────────────────────────────────────────────────────────
+      - name: Clippy lint
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Upload artifact
+      # ── Build (Debug) ─────────────────────────────────────────────────────────
+      - name: Build workspace (debug)
+        run: cargo build --workspace
+
+      # ── Tests ─────────────────────────────────────────────────────────────────
+      - name: Run tests
+        run: cargo test --workspace
+
+      # ── Build (Release) ───────────────────────────────────────────────────────
+      - name: Build workspace (release)
+        run: cargo build --workspace --release
+
+      # ── Upload artefact ───────────────────────────────────────────────────────
+      - name: Upload vidcut.exe
         uses: actions/upload-artifact@v4
         with:
-          name: VidCut-Windows
-          path: build/src/Release/VidCut.exe
+          name: vidcut-windows-x64
+          path: target/release/vidcut.exe
+          if-no-files-found: error

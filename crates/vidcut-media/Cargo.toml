@@ -1,0 +1,14 @@
+[package]
+name = "vidcut-media"
+version = "0.1.0"
+edition = "2021"
+description = "VidCut media layer — FFmpeg wrappers and frame cache (Phase 2 implementation)"
+license = "MIT"
+
+[dependencies]
+# Phase 1: stubs only — no FFmpeg bindings needed yet.
+# Phase 2 will add: ffmpeg-next.workspace = true, tokio.workspace = true, parking_lot.workspace = true
+anyhow.workspace    = true
+thiserror.workspace = true
+serde.workspace     = true
+uuid.workspace      = true
