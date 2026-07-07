@@ -10,6 +10,7 @@ pub mod decoder;
 pub mod encoder;
 pub mod ffmpeg_manager;
 pub mod frame_cache;
+pub mod frame_extractor;
 pub mod thumbnail;
 
 // Re-export the most commonly used items at crate root.
@@ -19,3 +20,4 @@ pub use encoder::{
     OutputFormat, QualityPreset,
 };
 pub use ffmpeg_manager::{ensure_ffmpeg, ffmpeg_ready, FfmpegStatus};
+pub use frame_extractor::{extract_frame, DecodedFrame};

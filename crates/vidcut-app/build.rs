@@ -4,7 +4,8 @@
 /// cargo is invoked from. Requires `winres` in `[build-dependencies]` and
 /// the MSVC `rc.exe` resource compiler from Visual Studio Build Tools.
 fn main() {
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+    #[cfg(target_os = "windows")]
+    {
         // CARGO_MANIFEST_DIR is set by Cargo to the directory containing this
         // crate's Cargo.toml (i.e. crates/vidcut-app/).
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();

@@ -4,7 +4,7 @@
 //! and UI selection state. Each panel accesses and mutates app state through
 //! the public accessor/action methods defined here.
 
-use std::{collections::HashMap, path::PathBuf, sync::mpsc};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc, time::Instant};
 
 use eframe::egui;
 use uuid::Uuid;
@@ -16,8 +16,8 @@ use vidcut_core::{
     AssetType, Clip, MediaAsset, Project, Track, TrackType,
 };
 use vidcut_media::{
-    ensure_ffmpeg, probe_file, AssetKind, ExportEncoder, ExportJob, ExportProgress,
-    ExportSegment, FfmpegStatus, OutputFormat, QualityPreset,
+    ensure_ffmpeg, extract_frame, probe_file, AssetKind, DecodedFrame, ExportEncoder,
+    ExportJob, ExportProgress, ExportSegment, FfmpegStatus, OutputFormat, QualityPreset,
 };
 
 use crate::panels;
@@ -75,11 +75,32 @@ pub struct VidCutApp {
     /// Last completed status message (success / error / cancelled).
     pub export_status: Option<String>,
 
+    // ── Preview playback state ────────────────────────────────────────────────
+    /// The currently displayed preview frame texture.
+    pub preview_texture: Option<egui::TextureHandle>,
+    /// Frame index that the current texture represents (avoids re-decoding).
+    preview_frame_index: Option<u64>,
+    /// Receiver for decoded frames from the background extraction thread.
+    preview_rx: Option<mpsc::Receiver<PreviewFrame>>,
+    /// The frame index of the most recently dispatched extraction request.
+    /// Used to discard stale results when the user scrubs quickly.
+    last_preview_request: Option<u64>,
+    /// Throttle: earliest `Instant` at which we may dispatch a new request.
+    preview_next_allowed: Instant,
+
     // ── FFmpeg setup state ────────────────────────────────────────────────────
     /// Current state of the FFmpeg sidecar lifecycle.
     pub ffmpeg_status: FfmpegStatus,
     /// Receiver for status updates from the background setup thread.
     ffmpeg_setup_rx: Option<mpsc::Receiver<FfmpegStatus>>,
+}
+
+/// A decoded frame delivered from the background extraction thread.
+pub struct PreviewFrame {
+    /// The frame index this result corresponds to.
+    pub frame_index: u64,
+    /// The decoded RGBA frame (None if extraction failed).
+    pub frame: Option<DecodedFrame>,
 }
 
 /// Temporary state while a clip body is being moved on the timeline.
@@ -147,6 +168,11 @@ impl VidCutApp {
             export_rx: None,
             export_progress: None,
             export_status: None,
+            preview_texture: None,
+            preview_frame_index: None,
+            preview_rx: None,
+            last_preview_request: None,
+            preview_next_allowed: Instant::now(),
             ffmpeg_status: FfmpegStatus::Checking,
             ffmpeg_setup_rx: Some(ffmpeg_rx),
         }
@@ -741,6 +767,155 @@ impl VidCutApp {
         self.ffmpeg_setup_rx = Some(rx);
         std::thread::spawn(move || vidcut_media::ensure_ffmpeg(tx));
     }
+
+    // ── Preview frame pipeline ────────────────────────────────────────────────
+
+    /// Determine which clip (if any) is under the playhead and request a
+    /// background frame extraction if we don't already have that frame.
+    pub fn request_preview_frame(&mut self, ctx: &egui::Context) {
+        // Don't extract if FFmpeg isn't ready.
+        if !matches!(self.ffmpeg_status, FfmpegStatus::Ready) {
+            return;
+        }
+
+        // Don't dispatch if a request is already in flight — wait for it.
+        if self.preview_rx.is_some() {
+            return;
+        }
+
+        let project = match &self.project {
+            Some(p) => p,
+            None => return,
+        };
+
+        let fps = project.settings.fps.max(1) as f64;
+        let frame_index = (self.playhead_secs * fps) as u64;
+
+        // Already have this frame — nothing to do.
+        if self.preview_frame_index == Some(frame_index) {
+            return;
+        }
+
+        // Throttle: at most one request every ~50ms to avoid flooding.
+        if Instant::now() < self.preview_next_allowed {
+            // Schedule a repaint so we retry soon.
+            ctx.request_repaint();
+            return;
+        }
+
+        // Find the topmost video clip at the current playhead position.
+        let playhead = self.playhead_secs;
+        let mut found_clip = None;
+
+        // Iterate tracks in reverse so higher tracks have visual priority.
+        for track in project.timeline.tracks.iter().rev() {
+            if track.track_type != vidcut_core::TrackType::Video {
+                continue;
+            }
+            for clip in &track.clips {
+                if playhead >= clip.timeline_start && playhead < clip.timeline_end {
+                    found_clip = Some(clip.clone());
+                    break;
+                }
+            }
+            if found_clip.is_some() {
+                break;
+            }
+        }
+
+        let clip = match found_clip {
+            Some(c) => c,
+            None => {
+                // No clip under playhead — clear preview.
+                self.preview_texture = None;
+                self.preview_frame_index = None;
+                return;
+            }
+        };
+
+        // Resolve source file path.
+        let asset = match project.media_pool.iter().find(|a| a.id == clip.asset_id) {
+            Some(a) => a,
+            None => return,
+        };
+
+        let source_timestamp =
+            clip.source_start + (playhead - clip.timeline_start);
+        let source_path = asset.path.clone();
+
+        // Create channel for this extraction.
+        let (tx, rx) = mpsc::channel::<PreviewFrame>();
+        self.preview_rx = Some(rx);
+        self.last_preview_request = Some(frame_index);
+        self.preview_next_allowed = Instant::now() + std::time::Duration::from_millis(50);
+
+        tracing::debug!(
+            "Preview: requesting frame {} at {:.3}s (source {:.3}s) from {:?}",
+            frame_index, playhead, source_timestamp, source_path.file_name()
+        );
+
+        // Spawn background thread.
+        let repaint_ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = extract_frame(&source_path, source_timestamp, 640);
+            match &result {
+                Ok(f) => tracing::debug!(
+                    "Preview: frame {} decoded OK ({}×{})",
+                    frame_index, f.width, f.height
+                ),
+                Err(e) => tracing::warn!(
+                    "Preview: frame {} extraction failed: {:#}",
+                    frame_index, e
+                ),
+            }
+            let _ = tx.send(PreviewFrame {
+                frame_index,
+                frame: result.ok(),
+            });
+            // Wake the UI so it polls the result.
+            repaint_ctx.request_repaint();
+        });
+    }
+
+    /// Poll for completed frame extractions and upload the texture.
+    pub fn poll_preview_frame(&mut self, ctx: &egui::Context) {
+        let rx = match &self.preview_rx {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        match rx.try_recv() {
+            Ok(pf) => {
+                if let Some(frame) = pf.frame {
+                    tracing::debug!(
+                        "Preview: uploading texture {}×{} for frame {}",
+                        frame.width, frame.height, pf.frame_index
+                    );
+                    let image = egui::ColorImage::from_rgba_unmultiplied(
+                        [frame.width as usize, frame.height as usize],
+                        &frame.rgba,
+                    );
+                    let texture = ctx.load_texture(
+                        "preview_frame",
+                        image,
+                        egui::TextureOptions::LINEAR,
+                    );
+                    self.preview_texture = Some(texture);
+                    self.preview_frame_index = Some(pf.frame_index);
+                } else {
+                    tracing::warn!("Preview: frame {} had no data (extraction failed)", pf.frame_index);
+                }
+
+                self.preview_rx = None;
+                ctx.request_repaint();
+            }
+            Err(mpsc::TryRecvError::Empty) => { /* still waiting */ }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                tracing::trace!("Preview: extraction thread disconnected");
+                self.preview_rx = None;
+            }
+        }
+    }
 }
 
 // ─── eframe::App ─────────────────────────────────────────────────────────────
@@ -771,6 +946,10 @@ impl eframe::App for VidCutApp {
 
         // Poll FFmpeg setup thread.
         self.poll_ffmpeg_status(ctx);
+
+        // Preview frame pipeline.
+        self.request_preview_frame(ctx);
+        self.poll_preview_frame(ctx);
 
         // Keyboard shortcuts.
         ctx.input(|i| {

@@ -14,10 +14,11 @@ use std::{
     fs::File,
     io::BufReader,
     path::Path,
+    process::{Command, Stdio},
 };
 
 use anyhow::Result;
-use tracing::warn;
+use tracing::{info, warn};
 
 // ─── AssetKind ───────────────────────────────────────────────────────────────
 
@@ -82,10 +83,11 @@ impl Default for MediaInfo {
 
 /// Probe a media file and return its [`MediaInfo`].
 ///
-/// Uses pure-Rust libraries:
+/// Uses pure-Rust libraries when possible:
 /// - `mp4` crate for MP4/M4V containers
 /// - `symphonia` crate for audio files
 /// - Extension-based detection for images (no decode needed)
+/// - Falls back to `ffprobe` CLI for formats not covered above
 ///
 /// Never panics — returns defaults on any error.
 pub fn probe_file(path: &Path) -> MediaInfo {
@@ -112,7 +114,7 @@ pub fn probe_file(path: &Path) -> MediaInfo {
     }
 }
 
-// ─── Video probe (mp4 crate) ─────────────────────────────────────────────────
+// ─── Video probe (mp4 crate + ffprobe fallback) ──────────────────────────────
 
 fn probe_video(path: &Path, kind: AssetKind) -> MediaInfo {
     let ext = path
@@ -120,14 +122,22 @@ fn probe_video(path: &Path, kind: AssetKind) -> MediaInfo {
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
 
-    // Only `mp4` crate can parse MP4/M4V; fall back for others.
-    match ext.as_deref() {
-        Some("mp4" | "m4v") => probe_mp4(path, kind),
-        _ => {
-            // For MOV/MKV/AVI etc. we can't probe without FFmpeg.
-            // Return a stub with kind=Video and duration=0 — still usable.
+    // Try the pure-Rust `mp4` crate for MP4/M4V first.
+    if matches!(ext.as_deref(), Some("mp4" | "m4v")) {
+        let info = probe_mp4(path, kind.clone());
+        if info.duration_secs > 0.0 {
+            return info;
+        }
+        // If mp4 crate returned 0 duration, fall through to ffprobe.
+        warn!("mp4 crate returned 0 duration for {:?} — trying ffprobe", path.file_name());
+    }
+
+    // For MOV/MKV/AVI/WebM/etc. (or MP4 fallback), use ffprobe.
+    match probe_ffprobe(path, kind.clone()) {
+        Some(info) => info,
+        None => {
             warn!(
-                "Cannot probe duration for {:?} without FFmpeg — using defaults",
+                "Cannot probe duration for {:?} — ffprobe unavailable or failed",
                 path.file_name()
             );
             MediaInfo {
@@ -137,6 +147,127 @@ fn probe_video(path: &Path, kind: AssetKind) -> MediaInfo {
             }
         }
     }
+}
+
+// ─── ffprobe-based probe ─────────────────────────────────────────────────────
+
+/// Resolve the path to the `ffprobe` binary.
+///
+/// Prefers the sidecar-managed binary next to the sidecar `ffmpeg`.
+/// Falls back to system `ffprobe` in PATH.
+fn ffprobe_bin() -> String {
+    // The sidecar puts ffprobe next to ffmpeg in the same directory.
+    if let Ok(ffmpeg_path) = ffmpeg_sidecar::paths::sidecar_path() {
+        let probe_path = ffmpeg_path.with_file_name(
+            if cfg!(target_os = "windows") { "ffprobe.exe" } else { "ffprobe" }
+        );
+        if probe_path.exists() {
+            return probe_path.to_string_lossy().into_owned();
+        }
+    }
+    // Fall back to system PATH.
+    "ffprobe".to_string()
+}
+
+/// Probe a media file using the `ffprobe` CLI to extract duration, resolution,
+/// fps, and audio presence.
+fn probe_ffprobe(path: &Path, kind: AssetKind) -> Option<MediaInfo> {
+    let bin = ffprobe_bin();
+    let output = Command::new(&bin)
+        .args([
+            "-v", "quiet",
+            "-print_format", "json",
+            "-show_format",
+            "-show_streams",
+        ])
+        .arg(path.as_os_str())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        Ok(o) => {
+            warn!("ffprobe exited with status {} for {:?}", o.status, path.file_name());
+            return None;
+        }
+        Err(e) => {
+            warn!("Failed to run ffprobe ({bin}): {e}");
+            return None;
+        }
+    };
+
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("Failed to parse ffprobe JSON: {e}");
+            return None;
+        }
+    };
+
+    // ── Extract container-level duration ─────────────────────────────────────
+    let duration_secs = json["format"]["duration"]
+        .as_str()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+
+    // ── Scan streams ────────────────────────────────────────────────────────
+    let mut width = 0u32;
+    let mut height = 0u32;
+    let mut fps = 0.0f64;
+    let mut has_audio = false;
+
+    if let Some(streams) = json["streams"].as_array() {
+        for stream in streams {
+            let codec_type = stream["codec_type"].as_str().unwrap_or("");
+            match codec_type {
+                "video" => {
+                    if width == 0 {
+                        width = stream["width"].as_u64().unwrap_or(0) as u32;
+                        height = stream["height"].as_u64().unwrap_or(0) as u32;
+
+                        // Parse r_frame_rate (e.g. "30000/1001" or "30/1")
+                        if let Some(rfr) = stream["r_frame_rate"].as_str() {
+                            if let Some((num_s, den_s)) = rfr.split_once('/') {
+                                if let (Ok(num), Ok(den)) = (
+                                    num_s.trim().parse::<f64>(),
+                                    den_s.trim().parse::<f64>(),
+                                ) {
+                                    if den > 0.0 {
+                                        fps = num / den;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "audio" => {
+                    has_audio = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    info!(
+        "ffprobe {:?}: {:.2}s, {}×{}, {:.2} fps, audio={}",
+        path.file_name(),
+        duration_secs,
+        width,
+        height,
+        fps,
+        has_audio,
+    );
+
+    Some(MediaInfo {
+        width,
+        height,
+        fps,
+        duration_secs,
+        has_audio,
+        kind,
+    })
 }
 
 fn probe_mp4(path: &Path, kind: AssetKind) -> MediaInfo {

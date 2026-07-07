@@ -1,8 +1,10 @@
 //! Preview panel — central area displaying the video preview.
 //!
 //! Rendered as an `egui::CentralPanel`.
-//! Phase 2: dark background with transport info overlay (timecode, speed, resolution).
-//! Phase 3: will display a `wgpu` texture streamed from the decode pipeline.
+//! Shows the decoded video frame at the current playhead position when
+//! available, falling back to a dark placeholder when no frame is loaded.
+//! Transport info overlays (timecode, speed, resolution) are always drawn
+//! on top.
 
 use eframe::egui::{self, Color32, RichText, Stroke};
 
@@ -31,24 +33,53 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(pw, ph), egui::Sense::hover());
                 let painter = ui.painter();
 
-                // Background
+                // Background (always drawn so letterbox bars are dark).
                 painter.rect_filled(rect, egui::Rounding::same(4.0), Color32::from_rgb(0x08, 0x08, 0x0e));
 
-                // Crosshair
-                let cx = rect.center();
-                let half = 20.0_f32;
-                let stroke = Stroke::new(1.0, Color32::from_rgb(0x25, 0x25, 0x45));
-                painter.line_segment([cx - egui::vec2(half, 0.0), cx + egui::vec2(half, 0.0)], stroke);
-                painter.line_segment([cx - egui::vec2(0.0, half), cx + egui::vec2(0.0, half)], stroke);
+                // ── Render video frame or placeholder ──────────────────────────
+                if let Some(texture) = &app.preview_texture {
+                    // Compute the largest rect that fits `rect` while preserving
+                    // the frame's aspect ratio (letterbox / pillarbox).
+                    let tex_size = texture.size_vec2();
+                    let tex_aspect = tex_size.x / tex_size.y;
 
-                // "Preview" label
-                painter.text(
-                    cx,
-                    egui::Align2::CENTER_CENTER,
-                    "Preview",
-                    egui::FontId::proportional(14.0),
-                    Color32::from_rgb(0x30, 0x30, 0x50),
-                );
+                    let (fw, fh) = if tex_aspect > (rect.width() / rect.height()) {
+                        // Frame is wider — pillarbox top/bottom.
+                        let w = rect.width();
+                        (w, w / tex_aspect)
+                    } else {
+                        // Frame is taller — letterbox left/right.
+                        let h = rect.height();
+                        (h * tex_aspect, h)
+                    };
+
+                    let frame_rect = egui::Rect::from_center_size(
+                        rect.center(),
+                        egui::vec2(fw, fh),
+                    );
+
+                    painter.image(
+                        texture.id(),
+                        frame_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
+                } else {
+                    // Placeholder: crosshair + "Preview" label.
+                    let cx = rect.center();
+                    let half = 20.0_f32;
+                    let stroke = Stroke::new(1.0, Color32::from_rgb(0x25, 0x25, 0x45));
+                    painter.line_segment([cx - egui::vec2(half, 0.0), cx + egui::vec2(half, 0.0)], stroke);
+                    painter.line_segment([cx - egui::vec2(0.0, half), cx + egui::vec2(0.0, half)], stroke);
+
+                    painter.text(
+                        cx,
+                        egui::Align2::CENTER_CENTER,
+                        "Preview",
+                        egui::FontId::proportional(14.0),
+                        Color32::from_rgb(0x30, 0x30, 0x50),
+                    );
+                }
 
                 // Border
                 painter.rect_stroke(rect, egui::Rounding::same(4.0), Stroke::new(1.0, theme::BORDER));
@@ -130,3 +161,4 @@ pub fn show(ctx: &egui::Context, app: &mut VidCutApp) {
             });
         });
 }
+
