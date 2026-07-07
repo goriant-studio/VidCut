@@ -13,7 +13,7 @@
 use eframe::egui::{self, Color32, RichText};
 
 use crate::{app::VidCutApp, panels::theme};
-use vidcut_media::{ffmpeg_available, OutputFormat, QualityPreset};
+use vidcut_media::{FfmpegStatus, OutputFormat, QualityPreset};
 
 // ─── show ────────────────────────────────────────────────────────────────────
 
@@ -80,23 +80,18 @@ fn dialog_contents(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut VidCutApp) 
     ui.separator();
     ui.add_space(8.0);
 
-    // ── FFmpeg check ──────────────────────────────────────────────────────────
-    if !ffmpeg_available() {
-        ui.horizontal_wrapped(|ui| {
+    // ── FFmpeg check ───────────────────────────────────────────────────────────
+    // Guard: if ffmpeg setup is still running, show a friendly wait message.
+    // (The ffmpeg_setup overlay panel already blocks most interaction.)
+    if !matches!(app.ffmpeg_status, FfmpegStatus::Ready) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(12.0);
             ui.label(
-                RichText::new("⚠  ffmpeg not found in PATH.")
+                RichText::new("⏳  FFmpeg is being set up, please wait…")
                     .color(Color32::from_rgb(0xff, 0xcc, 0x44))
                     .size(12.0),
             );
         });
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new(
-                "Install ffmpeg and ensure it is on your system PATH to enable export.",
-            )
-            .color(theme::TEXT_MUTED)
-            .size(11.0),
-        );
         ui.add_space(12.0);
         if ui
             .add(

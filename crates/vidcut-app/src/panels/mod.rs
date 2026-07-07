@@ -7,8 +7,10 @@
 //! - [`preview`] — central panel with the video preview
 //! - [`timeline`] — bottom panel with track rows
 //! - [`theme`] — dark theme setup
+//! - [`ffmpeg_setup`] — full-screen overlay for first-run FFmpeg download
 
 pub mod export_dialog;
+pub mod ffmpeg_setup;
 pub mod inspector;
 pub mod media_browser;
 pub mod preview;

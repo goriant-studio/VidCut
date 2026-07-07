@@ -16,8 +16,8 @@ use vidcut_core::{
     AssetType, Clip, MediaAsset, Project, Track, TrackType,
 };
 use vidcut_media::{
-    probe_file, AssetKind, ExportEncoder, ExportJob, ExportProgress, ExportSegment,
-    OutputFormat, QualityPreset,
+    ensure_ffmpeg, probe_file, AssetKind, ExportEncoder, ExportJob, ExportProgress,
+    ExportSegment, FfmpegStatus, OutputFormat, QualityPreset,
 };
 
 use crate::panels;
@@ -74,6 +74,12 @@ pub struct VidCutApp {
     pub export_progress: Option<(f32, String)>,
     /// Last completed status message (success / error / cancelled).
     pub export_status: Option<String>,
+
+    // ── FFmpeg setup state ────────────────────────────────────────────────────
+    /// Current state of the FFmpeg sidecar lifecycle.
+    pub ffmpeg_status: FfmpegStatus,
+    /// Receiver for status updates from the background setup thread.
+    ffmpeg_setup_rx: Option<mpsc::Receiver<FfmpegStatus>>,
 }
 
 /// Temporary state while a clip body is being moved on the timeline.
@@ -116,6 +122,11 @@ impl VidCutApp {
     /// Initialise the application. Called once by eframe during startup.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         panels::theme::apply_dark_theme(&cc.egui_ctx);
+
+        // Spawn background thread to ensure FFmpeg is available.
+        let (ffmpeg_tx, ffmpeg_rx) = mpsc::channel::<FfmpegStatus>();
+        std::thread::spawn(move || ensure_ffmpeg(ffmpeg_tx));
+
         Self {
             project: None,
             history: CommandHistory::new(),
@@ -136,6 +147,8 @@ impl VidCutApp {
             export_rx: None,
             export_progress: None,
             export_status: None,
+            ffmpeg_status: FfmpegStatus::Checking,
+            ffmpeg_setup_rx: Some(ffmpeg_rx),
         }
     }
 
@@ -683,6 +696,51 @@ impl VidCutApp {
             self.history.redo(&mut project.timeline);
         }
     }
+
+    // ── FFmpeg setup polling ─────────────────────────────────────────────────
+
+    /// Poll the background FFmpeg setup thread for status updates.
+    /// Must be called every frame while setup is running.
+    pub fn poll_ffmpeg_status(&mut self, ctx: &egui::Context) {
+        loop {
+            let msg = match &self.ffmpeg_setup_rx {
+                Some(rx) => rx.try_recv(),
+                None => break,
+            };
+            match msg {
+                Ok(status) => {
+                    let done = matches!(status, FfmpegStatus::Ready | FfmpegStatus::Failed(_));
+                    self.ffmpeg_status = status;
+                    if done {
+                        // Stop polling once terminal state reached.
+                        self.ffmpeg_setup_rx = None;
+                        break;
+                    }
+                    // Keep repainting while downloading.
+                    ctx.request_repaint();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Thread exited without sending Ready — mark as failed.
+                    if !matches!(self.ffmpeg_status, FfmpegStatus::Ready | FfmpegStatus::Failed(_)) {
+                        self.ffmpeg_status = FfmpegStatus::Failed(
+                            "FFmpeg setup thread exited unexpectedly.".to_owned(),
+                        );
+                    }
+                    self.ffmpeg_setup_rx = None;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Re-trigger the FFmpeg setup process (e.g. after a failed download).
+    pub fn action_retry_ffmpeg_setup(&mut self) {
+        let (tx, rx) = mpsc::channel::<FfmpegStatus>();
+        self.ffmpeg_status = FfmpegStatus::Checking;
+        self.ffmpeg_setup_rx = Some(rx);
+        std::thread::spawn(move || vidcut_media::ensure_ffmpeg(tx));
+    }
 }
 
 // ─── eframe::App ─────────────────────────────────────────────────────────────
@@ -710,6 +768,9 @@ impl eframe::App for VidCutApp {
 
         // Poll export progress.
         self.poll_export_progress(ctx);
+
+        // Poll FFmpeg setup thread.
+        self.poll_ffmpeg_status(ctx);
 
         // Keyboard shortcuts.
         ctx.input(|i| {
@@ -751,6 +812,8 @@ impl eframe::App for VidCutApp {
         panels::preview::show(ctx, self);
         // Export dialog (modal, rendered on top of all other panels).
         panels::export_dialog::show(ctx, self);
+        // FFmpeg setup overlay (topmost — blocks interaction until ready).
+        panels::ffmpeg_setup::show(ctx, self);
     }
 }
 

@@ -8,6 +8,7 @@
 pub mod audio;
 pub mod decoder;
 pub mod encoder;
+pub mod ffmpeg_manager;
 pub mod frame_cache;
 pub mod thumbnail;
 
@@ -17,3 +18,4 @@ pub use encoder::{
     ffmpeg_available, ExportEncoder, ExportJob, ExportProgress, ExportSegment,
     OutputFormat, QualityPreset,
 };
+pub use ffmpeg_manager::{ensure_ffmpeg, ffmpeg_ready, FfmpegStatus};

@@ -226,7 +226,9 @@ impl ExportEncoder {
 // ─── Command builder ──────────────────────────────────────────────────────────
 
 fn build_ffmpeg_command(job: &ExportJob) -> Result<Command> {
-    let mut cmd = Command::new("ffmpeg");
+    // Prefer the sidecar-managed binary; fall back to whatever is in PATH.
+    let ffmpeg_bin = ffmpeg_sidecar::paths::ffmpeg_path();
+    let mut cmd = Command::new(ffmpeg_bin);
     cmd.arg("-y"); // overwrite output without asking
 
     // ── Input files ──────────────────────────────────────────────────────────
@@ -394,8 +396,17 @@ fn parse_time_fraction(line: &str, total_duration: f64) -> Option<f32> {
 
 // ─── FFmpeg availability check ────────────────────────────────────────────────
 
-/// Returns `true` if `ffmpeg` is available in PATH.
+/// Returns `true` if `ffmpeg` is available — either via the sidecar-managed
+/// binary or as a system PATH entry.
 pub fn ffmpeg_available() -> bool {
+    // Prefer the sidecar-managed binary.
+    if ffmpeg_sidecar::paths::sidecar_path()
+        .map(|p| p.exists())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    // Fall back to system PATH.
     Command::new("ffmpeg")
         .arg("-version")
         .stdout(Stdio::null())

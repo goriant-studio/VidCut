@@ -18,9 +18,12 @@ tokio           = { version = "1", features = ["full"] }
 # File dialogs (native OS dialog, no C deps)
 rfd             = "0.15"
 
-# Media probing — pure Rust, no FFmpeg needed for Phase 2 basic
+# Pure-Rust media probing — no C library deps
 mp4             = "0.14"
 symphonia       = { version = "0.5", features = ["all"] }
+
+# FFmpeg sidecar — manages ffmpeg CLI binary download
+ffmpeg-sidecar  = "2"
 
 # Windows native
 windows         = { version = "0.58", features = [
