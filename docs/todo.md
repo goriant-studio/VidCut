@@ -79,7 +79,7 @@
 ### 2.1 Media Probing (`vidcut-media`)
 - [ ] Setup FFmpeg via `vcpkg` cho Windows (x64-windows static)
 - [x] `decoder.rs` — implement `probe_file()` (pure-Rust: mp4 + symphonia)
-- [ ] `decoder.rs` — implement `MediaDecoder::decode_frame()` (seek + decode → RGBA) — Phase 3
+- [x] `decoder.rs` — implement `MediaDecoder::decode_frame()` (seek + decode → RGBA) — Phase 3
 - [ ] `audio.rs` — implement `AudioDecoder` (swresample → f32 PCM) — Phase 3
 - [ ] `audio.rs` — waveform data generation cho timeline display
 - [ ] `frame_cache.rs` — LRU cache (parking_lot RwLock, configurable capacity)
@@ -109,8 +109,8 @@
 - [x] Thumbnail strip cho video clips (deterministic color pattern)
 
 ### 2.5 Preview Playback
-- [ ] wgpu texture streaming từ decoded frames — Phase 3
-- [ ] Real-time playback (tokio task decode → mpsc → UI thread) — Phase 3
+- [x] wgpu texture streaming từ decoded frames — Phase 3
+- [x] Real-time playback (tokio task decode → mpsc → UI thread) — Phase 3
 - [x] Play / Pause / Stop controls
 - [x] Frame-accurate seeking (click trên timeline + ← → arrow keys)
 - [x] Playback speed control (J/K/L: 0.25×, 0.5×, 1×, 2×, 4×; reverse with J)
@@ -139,8 +139,8 @@
 - [x] J/K/L playback speed controls hoạt động
 - [x] ← → frame-step hoạt động
 - [x] Inspector transform fields editable (DragValue)
-- [ ] Preview playback mượt ≥ 30fps (1080p) — Phase 3
-- [ ] Export MP4 ra file đúng thời lượng — Phase 3
+- [x] Preview playback mượt ≥ 30fps (1080p) — Phase 3
+- [x] Export MP4 ra file đúng thời lượng — Phase 3
 - [ ] No memory leaks (frame cache bounded)
 
 ---
